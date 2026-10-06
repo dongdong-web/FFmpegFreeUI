@@ -8,6 +8,16 @@ Public NotInheritable Class PresetCompiler
                                           Optional reduceNoise As Boolean = False,
                                           Optional normalizeAudio As Boolean = False,
                                           Optional hasAudio As Boolean = True) As IReadOnlyList(Of String)
+        Return BuildPlan(input, output, quality, maxShortEdge, reduceNoise, normalizeAudio, hasAudio)(0)
+    End Function
+
+    Public Shared Function BuildPlan(input As String, output As String, quality As Integer,
+                                    Optional maxShortEdge As Integer = 0,
+                                    Optional reduceNoise As Boolean = False,
+                                    Optional normalizeAudio As Boolean = False,
+                                    Optional hasAudio As Boolean = True,
+                                    Optional videoBitrate As Integer = 0,
+                                    Optional passLog As String = "") As IReadOnlyList(Of IReadOnlyList(Of String))
         If quality < 0 OrElse quality > 2 Then Throw New ArgumentOutOfRangeException(NameOf(quality))
         If Not {0, 720, 1080}.Contains(maxShortEdge) Then Throw New ArgumentOutOfRangeException(NameOf(maxShortEdge))
         Dim crf = {"20", "25", "30"}(quality)
@@ -51,21 +61,36 @@ Public NotInheritable Class PresetCompiler
             preset.音频参数_响度标准化_峰值电平 = "-1.5"
         End If
 
+        If videoBitrate < 0 Then Throw New ArgumentOutOfRangeException(NameOf(videoBitrate))
+        If videoBitrate > 0 Then
+            If String.IsNullOrWhiteSpace(passLog) Then Throw New ArgumentException("A private pass log is required.", NameOf(passLog))
+            preset.视频参数_比特率_控制方式 = 预设数据_v6.视频全局质量控制方式.TPE
+            preset.视频参数_比特率_基础 = videoBitrate.ToString(CultureInfo.InvariantCulture)
+        End If
         Dim stages = 预设管理_v6.生成阶段化命令行(preset, input, output)
-        If stages.Count <> 1 OrElse stages(0).阶段 <> 预设数据_v6.命令行阶段.普通单次 Then
-            Throw New InvalidOperationException("The beginner compression profile must generate one encoding stage.")
-        End If
-        Dim arguments = 启动参数响应_v6.拆分命令行(stages(0).命令行)
-        If arguments.Count = 0 OrElse arguments.Last() <> output OrElse arguments.Where(Function(x) x = "-i").Count() <> 1 Then
-            Throw New InvalidOperationException("Unexpected input or output in the upstream compression plan.")
-        End If
-        ' The desktop compiler overwrites outputs by default; the local edition
-        ' never does. Input protocols and stream metadata remain constrained.
-        Dim overwrite = arguments.IndexOf("-y")
-        If overwrite < 0 Then Throw New InvalidOperationException("Missing overwrite policy in upstream plan.")
-        arguments(overwrite) = "-n"
-        arguments.InsertRange(0, {"-nostdin", "-protocol_whitelist", "file,pipe"})
-        arguments.InsertRange(arguments.Count - 1, {"-map_metadata:s", "-1", "-movflags", "+faststart", "-progress", "pipe:1", "-nostats"})
-        Return arguments.AsReadOnly()
+        If stages.Count <> If(videoBitrate > 0, 2, 1) Then Throw New InvalidOperationException("Unexpected encoding stages.")
+        Dim plan As New List(Of IReadOnlyList(Of String))
+        For Each stage In stages
+            Dim firstPass = stage.阶段 = 预设数据_v6.命令行阶段.二次编码第一遍
+            Dim arguments = 启动参数响应_v6.拆分命令行(stage.命令行)
+            If arguments.Count = 0 OrElse arguments.Last() <> If(firstPass, "NUL", output) OrElse arguments.Where(Function(x) x = "-i").Count() <> 1 Then
+                Throw New InvalidOperationException("Unexpected input or output in the upstream compression plan.")
+            End If
+            ' The desktop compiler overwrites outputs by default; the local edition
+            ' never does. Input protocols and stream metadata remain constrained.
+            Dim overwrite = arguments.IndexOf("-y")
+            If overwrite < 0 Then Throw New InvalidOperationException("Missing overwrite policy in upstream plan.")
+            arguments(overwrite) = "-n"
+            If videoBitrate > 0 Then
+                Dim logIndex = arguments.FindIndex(Function(x) x.StartsWith("-passlogfile", StringComparison.Ordinal))
+                If logIndex < 0 OrElse logIndex + 1 >= arguments.Count Then Throw New InvalidOperationException("Missing upstream pass log.")
+                arguments(logIndex + 1) = passLog
+            End If
+            arguments.InsertRange(0, {"-nostdin", "-protocol_whitelist", "file,pipe"})
+            If Not firstPass Then arguments.InsertRange(arguments.Count - 1, {"-map_metadata:s", "-1", "-movflags", "+faststart"})
+            arguments.InsertRange(arguments.Count - 1, {"-progress", "pipe:1", "-nostats"})
+            plan.Add(arguments.AsReadOnly())
+        Next
+        Return plan.AsReadOnly()
     End Function
 End Class

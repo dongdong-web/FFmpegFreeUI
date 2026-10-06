@@ -7,10 +7,10 @@ using LocalCompress.Upstream;
 namespace LocalCompress.Core;
 
 public enum CompressionQuality { Quality, Balanced, Small }
-public sealed record ProcessingOptions(int MaxShortEdge = 0, bool ReduceNoise = false, bool NormalizeAudio = false);
+public sealed record ProcessingOptions(int MaxShortEdge = 0, bool ReduceNoise = false, bool NormalizeAudio = false, double? TargetMegabytes = null);
 public sealed record MediaInfo(double Duration, int Width, int Height, bool HasAudio, bool IsHdr);
-public sealed record CompressionProgress(double Fraction, string Speed);
-public sealed record CompressionResult(string OutputPath, long OriginalBytes, long OutputBytes);
+public sealed record CompressionProgress(double Fraction, string Speed, string Stage = "压缩中");
+public sealed record CompressionResult(string OutputPath, long OriginalBytes, long OutputBytes, bool AlreadyWithinTarget = false);
 public sealed record ToolPaths(string Ffmpeg, string Ffprobe)
 {
     public static ToolPaths? Find(string appDirectory)
@@ -108,42 +108,84 @@ public sealed class CompressionEngine(ToolPaths tools)
         ProcessingOptions? options = null)
     {
         input = LocalFile(input);
+        options ??= new();
+        long? targetBytes = null;
+        if (options.TargetMegabytes is double target)
+        {
+            if (!double.IsFinite(target) || target < 0.1 || target > 100000)
+                throw new ArgumentOutOfRangeException(nameof(options), "目标大小须在 0.1 到 100000 MB 之间。");
+            // Decimal MB matches upload limits; binary MiB would exceed them.
+            targetBytes = checked((long)Math.Floor(target * 1_000_000));
+        }
         var info = await ProbeAsync(input, cancellationToken);
         if (info.IsHdr) throw new InvalidOperationException("这个视频是 HDR。首版暂不支持 HDR 压缩，以免出现颜色失真；原文件未改动。");
         if (!Path.IsPathFullyQualified(outputDirectory) || outputDirectory.StartsWith(@"\\", StringComparison.Ordinal) || outputDirectory.StartsWith("//", StringComparison.Ordinal))
             throw new InvalidOperationException("请选择本机磁盘上的保存文件夹。");
         outputDirectory = LocalStoragePath(outputDirectory);
+        var originalBytes = new FileInfo(input).Length;
+        if (targetBytes is long limit && originalBytes <= limit)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report(new(1, "", "已符合目标"));
+            return new(input, originalBytes, originalBytes, true);
+        }
         Directory.CreateDirectory(outputDirectory);
         var temp = Path.Combine(outputDirectory, ".localcompress-" + Guid.NewGuid().ToString("N") + ".mp4");
+        var passLog = temp + ".pass";
         try
         {
             double fraction = 0;
             string speed = "";
             var lastReport = Stopwatch.StartNew();
-            var result = await RunAsync(tools.Ffmpeg, BuildArguments(input, temp, quality, options, info.HasAudio), line =>
+            var videoBitrate = targetBytes is long budget ? CalculateTargetBitrate(budget, info.Duration, info.HasAudio) : 0;
+            var attempts = targetBytes.HasValue ? 2 : 1;
+            for (var attempt = 0; attempt < attempts; attempt++)
             {
-                var split = line.IndexOf('=');
-                if (split < 0) return;
-                var value = line[(split + 1)..];
-                switch (line[..split])
+                var plan = PresetCompiler.BuildPlan(input, temp, (int)quality, options.MaxShortEdge,
+                    options.ReduceNoise, options.NormalizeAudio, info.HasAudio, videoBitrate, passLog);
+                for (var stageIndex = 0; stageIndex < plan.Count; stageIndex++)
                 {
-                    case "out_time_us":
-                        if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var microseconds))
-                            fraction = Math.Clamp(microseconds / 1_000_000 / info.Duration, 0, .99);
-                        break;
-                    case "speed": speed = value; break;
-                    case "progress" when lastReport.ElapsedMilliseconds >= 250:
-                        progress?.Report(new(fraction, speed));
-                        lastReport.Restart();
-                        break;
+                    var stageName = targetBytes.HasValue ? (attempt == 0 ? "" : "大小校正 · ") + (stageIndex == 0 ? "分析画面" : "生成视频") : "压缩中";
+                    progress?.Report(new(fraction, speed, stageName));
+                    var result = await RunAsync(tools.Ffmpeg, plan[stageIndex], line =>
+                    {
+                        var split = line.IndexOf('=');
+                        if (split < 0) return;
+                        var value = line[(split + 1)..];
+                        switch (line[..split])
+                        {
+                            case "out_time_us":
+                                if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var microseconds))
+                                {
+                                    var stageFraction = Math.Clamp(microseconds / 1_000_000 / info.Duration, 0, 1);
+                                    // Reserve space for a possible correction, without moving backwards.
+                                    var candidate = targetBytes.HasValue ? (attempt == 0 ? (stageIndex + stageFraction) / plan.Count * .9 : .9 + (stageIndex + stageFraction) / plan.Count * .09) : stageFraction * .99;
+                                    fraction = Math.Max(fraction, Math.Min(candidate, .99));
+                                }
+                                break;
+                            case "speed": speed = value; break;
+                            case "progress" when lastReport.ElapsedMilliseconds >= 250:
+                                progress?.Report(new(fraction, speed, stageName));
+                                lastReport.Restart();
+                                break;
+                        }
+                    }, cancellationToken);
+                    if (result.ExitCode != 0) throw new InvalidOperationException("压缩没有完成，原文件未改动。\n" + result.Error);
                 }
-            }, cancellationToken);
-            if (result.ExitCode != 0) throw new InvalidOperationException("压缩没有完成，原文件未改动。\n" + result.Error);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (targetBytes is not long maxBytes || new FileInfo(temp).Length <= maxBytes) break;
+                if (attempt == attempts - 1)
+                    throw new InvalidOperationException("结果仍超过目标大小，已清理临时结果。请增加目标大小，或选择更低分辨率；原文件未改动。");
+                var actual = new FileInfo(temp).Length;
+                videoBitrate = Math.Min(videoBitrate - 1, checked((int)Math.Floor(videoBitrate * (double)maxBytes / actual * .92)));
+                if (videoBitrate < 16000) throw new InvalidOperationException("目标太小，无法保留可用的视频画面。请增加目标大小；原文件未改动。");
+                File.Delete(temp);
+                CleanPassLogs(passLog);
+            }
             cancellationToken.ThrowIfCancellationRequested();
             var output = await ProbeAsync(temp, cancellationToken);
             if (Math.Abs(output.Duration - info.Duration) > Math.Max(1, info.Duration * .02) || (info.HasAudio && !output.HasAudio))
                 throw new InvalidOperationException("压缩结果未通过完整性检查，原文件未改动。");
-            var originalBytes = new FileInfo(input).Length;
             var outputBytes = new FileInfo(temp).Length;
             if (outputBytes >= originalBytes)
                 throw new InvalidOperationException("这个视频已经很紧凑，本次结果没有变小。已丢弃压缩结果，原文件未改动；可以尝试“体积优先”。");
@@ -156,7 +198,25 @@ public sealed class CompressionEngine(ToolPaths tools)
                 catch (IOException) when (File.Exists(final)) { }
             }
         }
-        finally { if (File.Exists(temp)) File.Delete(temp); }
+        finally { if (File.Exists(temp)) File.Delete(temp); CleanPassLogs(passLog); }
+    }
+
+    public static int CalculateTargetBitrate(long targetBytes, double duration, bool hasAudio)
+    {
+        if (targetBytes <= 0 || !double.IsFinite(duration) || duration <= 0)
+            throw new ArgumentOutOfRangeException(nameof(targetBytes));
+        // Reserve container overhead and encoder variance; keep the existing 128 kb/s audio.
+        var video = (targetBytes * .96 - 16000) * 8 / duration - (hasAudio ? 128000 : 0);
+        if (video < 16000)
+            throw new InvalidOperationException("目标太小，无法保留音轨和可用的视频画面。请增加目标大小，或缩短视频；原文件未改动。");
+        return (int)Math.Min(Math.Floor(video), 1_000_000_000);
+    }
+
+    private static void CleanPassLogs(string prefix)
+    {
+        // Only remove files belonging to this job's unique prefix.
+        foreach (var file in Directory.EnumerateFiles(Path.GetDirectoryName(prefix)!, Path.GetFileName(prefix) + "*"))
+            File.Delete(file);
     }
 
     private sealed record ProcessResult(int ExitCode, string Output, string Error);
@@ -166,9 +226,12 @@ public sealed class CompressionEngine(ToolPaths tools)
         token.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo(executable)
         {
-            UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
         };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var process = new Process { StartInfo = start };

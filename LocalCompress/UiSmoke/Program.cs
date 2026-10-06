@@ -26,6 +26,20 @@ var thread = new Thread(() =>
         using var expanded = new Bitmap(form.Width, form.Height);
         form.DrawToBitmap(expanded, new Rectangle(0, 0, form.Width, form.Height));
         expanded.Save(Path.Combine(Path.GetDirectoryName(destination)!, "ui-processing-preview.png"), System.Drawing.Imaging.ImageFormat.Png);
+        var targetOptions = form.Controls.Find("targetOptions", true).Single();
+        if (targetOptions.Visible) throw new Exception("Target size must be hidden in the default quality mode.");
+        var quality = (ComboBox)form.Controls.Find("quality", true).Single();
+        quality.SelectedIndex = 3;
+        Application.DoEvents();
+        if (!targetOptions.Visible || ((NumericUpDown)form.Controls.Find("targetMegabytes", true).Single()).Value != 100)
+            throw new Exception("Target mode must expose a 100 MB default.");
+        using var targetBitmap = new Bitmap(form.Width, form.Height);
+        form.DrawToBitmap(targetBitmap, new Rectangle(0, 0, form.Width, form.Height));
+        targetBitmap.Save(Path.Combine(Path.GetDirectoryName(destination)!, "ui-target-preview.png"), System.Drawing.Imaging.ImageFormat.Png);
+        quality.SelectedIndex = 1;
+        Application.DoEvents();
+        if (targetOptions.Visible) throw new Exception("Returning to quality mode must hide target settings.");
+        Console.WriteLine("PASS Target-size mode exposes its input and returns to the default mode");
         Console.WriteLine("PASS Optional controls are collapsed by default and expand correctly");
         form.Close();
         Console.WriteLine("PASS Native WinForms startup and rendering: " + destination);

@@ -15,7 +15,8 @@ public sealed class MainForm : Form
 
     private readonly ToolPaths? _tools = ToolPaths.Find(AppContext.BaseDirectory);
     private readonly ListView _files = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, HideSelection = false, BorderStyle = BorderStyle.None, ShowItemToolTips = true };
-    private readonly ComboBox _quality = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 175, AccessibleName = "压缩方案" };
+    private readonly ComboBox _quality = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 175, AccessibleName = "压缩方案", Name = "quality" };
+    private readonly NumericUpDown _target = new() { Minimum = .1m, Maximum = 100000, DecimalPlaces = 1, Value = 100, Width = 105, AccessibleName = "每个视频的目标大小 MB", Name = "targetMegabytes" };
     private readonly Button _add = MakeButton("＋ 添加视频");
     private readonly Button _remove = MakeButton("移除选中");
     private readonly Button _folder = MakeButton("选择保存位置");
@@ -58,10 +59,18 @@ public sealed class MainForm : Form
         _files.Columns.Add("原始大小", 110);
         _files.Columns.Add("状态", 330);
         layout.Controls.Add(_files, 0, 4);
-        _quality.Items.AddRange(["画质优先", "均衡（推荐）", "体积优先"]);
+        _quality.Items.AddRange(["画质优先", "均衡（推荐）", "体积优先", "指定目标大小"]);
         _quality.SelectedIndex = 1;
+        var qualityHelp = MakeLabel("画质与体积需要取舍，实际缩小比例因视频而异。", 9);
         layout.Controls.Add(Flow(MakeLabel("压缩方案", 10, true), _quality,
-            MakeLabel("画质与体积需要取舍，实际缩小比例因视频而异。", 9)), 0, 5);
+            qualityHelp), 0, 5);
+        var targetOptions = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Visible = false, Name = "targetOptions" };
+        targetOptions.Controls.AddRange([MakeLabel("每个视频不超过", 9), _target, MakeLabel("MB（1 MB = 100 万字节）", 9)]);
+        _quality.SelectedIndexChanged += (_, _) =>
+        {
+            targetOptions.Visible = _quality.SelectedIndex == 3;
+            qualityHelp.Text = _quality.SelectedIndex == 3 ? "自动分析再编码，耗时更长；目标越小，画质越低。" : "画质与体积需要取舍，实际缩小比例因视频而异。";
+        };
         _resolution.Items.AddRange(["保留原尺寸（默认）", "缩小到 1080p", "缩小到 720p"]);
         _resolution.SelectedIndex = 0;
         _more.Name = "moreProcessing";
@@ -71,7 +80,7 @@ public sealed class MainForm : Form
         processing.Controls.Add(MakeLabel("只缩小不放大；降噪会减少细节，统一音量会调整音轨，默认都关闭。", 9));
         processing.Name = "processingOptions";
         processing.Visible = false;
-        layout.Controls.Add(Flow(_more, MakeLabel("可选，不改也能直接压缩", 9)), 0, 6);
+        layout.Controls.Add(Flow(_more, targetOptions), 0, 6);
         layout.Controls.Add(processing, 0, 7);
         _more.Click += (_, _) =>
         {
@@ -175,9 +184,10 @@ public sealed class MainForm : Form
         using var cancellation = new CancellationTokenSource();
         _run = cancellation;
         SetRunning(true);
-        var quality = (CompressionQuality)_quality.SelectedIndex;
+        var quality = _quality.SelectedIndex == 3 ? CompressionQuality.Balanced : (CompressionQuality)_quality.SelectedIndex;
         var processingOptions = new ProcessingOptions(
-            _resolution.SelectedIndex switch { 1 => 1080, 2 => 720, _ => 0 }, _denoise.Checked, _normalize.Checked);
+            _resolution.SelectedIndex switch { 1 => 1080, 2 => 720, _ => 0 }, _denoise.Checked, _normalize.Checked,
+            _quality.SelectedIndex == 3 ? (double)_target.Value : null);
         var engine = new CompressionEngine(_tools);
         int completed = 0, unsuccessful = 0;
         try
@@ -194,7 +204,7 @@ public sealed class MainForm : Form
                 var progress = new Progress<CompressionProgress>(p =>
                 {
                     if (_run != cancellation || item.Completed || !active) return;
-                    row.SubItems[2].Text = $"压缩中 {p.Fraction:P0}";
+                    row.SubItems[2].Text = $"{p.Stage} {p.Fraction:P0}";
                     _progress.Value = Math.Clamp((int)((batchIndex + p.Fraction) / jobs.Length * 1000), 0, 1000);
                 });
                 try
@@ -204,8 +214,8 @@ public sealed class MainForm : Form
                     item.Output = result.OutputPath;
                     _lastOutput = result.OutputPath;
                     var reduction = 1 - (double)result.OutputBytes / result.OriginalBytes;
-                    row.SubItems[2].Text = $"完成 · {FormatBytes(result.OutputBytes)} · 减少 {reduction:P0}";
-                    item.Detail = $"已保存：{result.OutputPath}\n原始大小：{FormatBytes(result.OriginalBytes)}\n压缩后：{FormatBytes(result.OutputBytes)}\n原文件保留。";
+                    row.SubItems[2].Text = result.AlreadyWithinTarget ? "已符合目标 · 无需压缩" : $"完成 · {FormatBytes(result.OutputBytes)} · 减少 {reduction:P0}";
+                    item.Detail = result.AlreadyWithinTarget ? "原视频已经在目标大小以内，未生成重复文件。\n" + result.OutputPath : $"已保存：{result.OutputPath}\n原始大小：{FormatBytes(result.OriginalBytes)}\n压缩后：{FormatBytes(result.OutputBytes)}\n原文件保留。";
                     completed++;
                 }
                 catch (OperationCanceledException)
@@ -240,14 +250,14 @@ public sealed class MainForm : Form
     private void SetRunning(bool running)
     {
         _add.Enabled = _remove.Enabled = _folder.Enabled = _quality.Enabled = !running;
-        _more.Enabled = _resolution.Enabled = _denoise.Enabled = _normalize.Enabled = !running;
+        _more.Enabled = _resolution.Enabled = _denoise.Enabled = _normalize.Enabled = _target.Enabled = !running;
         _cancel.Enabled = running;
         _open.Enabled = !running && _lastOutput is not null;
         UpdateStart();
     }
 
     private void UpdateStart() => _start.Enabled = _run is null && _tools is not null && _files.Items.Cast<ListViewItem>().Any(x => !((VideoItem)x.Tag!).Completed);
-    private static string FormatBytes(long size) => size >= 1024 * 1024 * 1024 ? $"{size / (1024d * 1024 * 1024):F2} GB" : $"{size / (1024d * 1024):F1} MB";
+    private static string FormatBytes(long size) => size >= 1_000_000_000 ? $"{size / 1_000_000_000d:F2} GB" : $"{size / 1_000_000d:F2} MB";
     private static Label MakeLabel(string text, float size, bool bold = false) => new()
     { Text = text, AutoSize = true, Font = new Font("Microsoft YaHei UI", size, bold ? FontStyle.Bold : FontStyle.Regular), Margin = new Padding(0, 9, 12, 0) };
     private static FlowLayoutPanel Flow(params Control[] controls)

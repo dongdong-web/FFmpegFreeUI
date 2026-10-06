@@ -45,10 +45,27 @@ try
     Check(second.OutputPath != first.OutputPath && File.Exists(first.OutputPath), "existing outputs are preserved with unique names");
     var after = SHA256.HashData(await File.ReadAllBytesAsync(input));
     Check(before.SequenceEqual(after), "original content remains byte-for-byte unchanged");
+    var targeted = await engine.CompressAsync(input, root, CompressionQuality.Balanced, null, default,
+        new ProcessingOptions(ReduceNoise: true, NormalizeAudio: true, TargetMegabytes: .15));
+    var targetedInfo = await engine.ProbeAsync(targeted.OutputPath, default);
+    Check(targeted.OutputBytes <= 150000 && targeted.OutputBytes < targeted.OriginalBytes && targetedInfo.HasAudio,
+        "two-pass target-size compression meets the decimal MB limit with audio and optional filters");
+    var targetedTags = await Tool(tools.Ffprobe, "-v", "error", "-show_entries", "format_tags:stream_tags", "-of", "json", targeted.OutputPath);
+    Check(!targetedTags.Contains("private-title-test") && !targetedTags.Contains("private-audio-test"), "two-pass output retains metadata removal");
+    var skip = await engine.CompressAsync(input, root, CompressionQuality.Balanced, null, default, new ProcessingOptions(TargetMegabytes: 100));
+    var skippedHash = SHA256.HashData(await File.ReadAllBytesAsync(input));
+    Check(skip.AlreadyWithinTarget && skip.OutputPath == input && before.SequenceEqual(skippedHash),
+        "videos already within target are preserved without duplicate encoding");
+    foreach (var invalidTarget in new[] { double.NaN, double.PositiveInfinity, 0, -.1, 100001 })
+        await Reject(() => engine.CompressAsync(input, root, CompressionQuality.Balanced, null, default, new ProcessingOptions(TargetMegabytes: invalidTarget)), "invalid target size rejected: " + invalidTarget);
+    await Reject(() => Task.FromResult(CompressionEngine.CalculateTargetBitrate(100000, 600, true)), "impossible audio/video budget reports a useful error");
     var noAudio = Path.Combine(root, "无音轨.mp4");
     await Tool(tools.Ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24", "-t", "2", "-c:v", "libx264", "-crf", "0", noAudio);
     var silent = await engine.CompressAsync(noAudio, root, CompressionQuality.Quality, null, default);
     Check(!(await engine.ProbeAsync(silent.OutputPath, default)).HasAudio, "videos without audio succeed");
+    var silentTarget = await engine.CompressAsync(noAudio, root, CompressionQuality.Balanced, null, default, new ProcessingOptions(TargetMegabytes: .1));
+    Check(silentTarget.OutputBytes <= 100000 && !(await engine.ProbeAsync(silentTarget.OutputPath, default)).HasAudio,
+        "two-pass target-size compression works without an audio track");
     var processed = await engine.CompressAsync(input, root, CompressionQuality.Balanced, null, default,
         new ProcessingOptions(720, ReduceNoise: true, NormalizeAudio: true));
     var processedInfo = await engine.ProbeAsync(processed.OutputPath, default);
@@ -92,6 +109,13 @@ try
     var cancelProgress = new InlineProgress(_ => activeCancellation.Cancel());
     await Reject(() => engine.CompressAsync(longVideo, root, CompressionQuality.Balanced, cancelProgress, activeCancellation.Token), "running encoder can be cancelled");
     Check(activeCancellation.IsCancellationRequested && File.Exists(longVideo), "in-flight cancellation leaves the original intact");
+    using var passCancellation = new CancellationTokenSource();
+    var observedStages = new List<string>();
+    var passProgress = new InlineProgress(p => { observedStages.Add(p.Stage); if (p.Stage == "生成视频") passCancellation.Cancel(); });
+    await Reject(() => engine.CompressAsync(longVideo, root, CompressionQuality.Balanced, passProgress, passCancellation.Token,
+        new ProcessingOptions(TargetMegabytes: 1)), "target-size encoding cancels between passes");
+    Check(observedStages.Contains("分析画面") && observedStages.Contains("生成视频") && !Directory.EnumerateFiles(root, ".localcompress-*").Any(),
+        "two-pass progress identifies stages and cancellation cleans private pass logs");
     using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
     listener.Start();
     var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
