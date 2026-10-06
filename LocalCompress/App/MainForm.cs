@@ -23,7 +23,6 @@ public sealed class MainForm : Form
     private readonly Button _start = MakeButton("开始压缩", true);
     private readonly Button _cancel = MakeButton("停止", false);
     private readonly Button _open = MakeButton("定位文件");
-    private readonly Button _play = MakeButton("播放结果");
     private readonly TextBox _result = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
         Name = "resultDetail", Text = "处理后会显示是否生成文件、前后大小和保存位置。选择任务可查看详情。", BackColor = Color.White };
     private readonly Label _output = MakeLabel("默认保存在各原视频旁，原文件始终保留。", 10);
@@ -78,10 +77,9 @@ public sealed class MainForm : Form
         layout.Controls.Add(_progress, 0, 9);
         layout.Controls.Add(_status, 0, 10);
         _open.Name = "locateResult";
-        _play.Name = "playResult";
         _status.Name = "batchStatus";
         _files.Name = "videoFiles";
-        layout.Controls.Add(Flow(_start, _cancel, _play, _open), 0, 11);
+        layout.Controls.Add(Flow(_start, _cancel, _open), 0, 11);
         layout.Controls.Add(_result, 0, 12);
         var engineLabel = MakeLabel(_tools is null
             ? "请使用完整体验包，包内自带本地处理引擎。"
@@ -90,7 +88,6 @@ public sealed class MainForm : Form
         Controls.Add(layout);
         _cancel.Enabled = false;
         _open.Enabled = false;
-        _play.Enabled = false;
         _files.SelectedIndexChanged += (_, _) => UpdateResult();
         UpdateStart();
 
@@ -118,8 +115,7 @@ public sealed class MainForm : Form
         };
         _start.Click += async (_, _) => await RunBatchAsync();
         _cancel.Click += (_, _) => { _run?.Cancel(); _cancel.Enabled = false; _status.Text = "正在停止，原文件不会改动…"; };
-        _open.Click += (_, _) => OpenSelectedResult(false);
-        _play.Click += (_, _) => OpenSelectedResult(true);
+        _open.Click += (_, _) => OpenSelectedResult();
         _files.DoubleClick += (_, _) =>
         {
             if (_files.SelectedItems.Count == 0) return;
@@ -247,19 +243,20 @@ public sealed class MainForm : Form
         return output is not null && File.Exists(output) ? output : null;
     }
 
-    private void OpenSelectedResult(bool play)
+    private void OpenSelectedResult()
     {
         var output = SelectedOutput();
         if (output is null) { UpdateResult(); return; }
         try
         {
-            var start = new ProcessStartInfo(play ? output : "explorer.exe") { UseShellExecute = play };
-            if (!play) { start.ArgumentList.Add("/select,"); start.ArgumentList.Add(output); }
+            var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = false };
+            start.ArgumentList.Add("/select,");
+            start.ArgumentList.Add(output);
             Process.Start(start)?.Dispose();
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {
-            MessageBox.Show(this, "无法打开结果，请复制下方路径，在资源管理器或播放器中打开。\n" + ex.Message, "打开结果");
+            MessageBox.Show(this, "无法定位文件，请复制下方路径，在资源管理器中打开。\n" + ex.Message, "定位文件");
         }
     }
 
@@ -267,7 +264,7 @@ public sealed class MainForm : Form
     {
         _result.Text = _files.SelectedItems.Count == 1 ? ((VideoItem)_files.SelectedItems[0].Tag!).Detail : "选择任务查看处理结果。";
         if (_result.Text.Length == 0) _result.Text = "等待处理，尚未生成压缩文件。";
-        _open.Enabled = _play.Enabled = _run is null && SelectedOutput() is not null;
+        _open.Enabled = _run is null && SelectedOutput() is not null;
     }
 
     private void UpdateStart() => _start.Enabled = _run is null && _tools is not null && _files.Items.Cast<ListViewItem>().Any(x => !((VideoItem)x.Tag!).Completed);

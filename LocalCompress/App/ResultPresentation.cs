@@ -19,7 +19,7 @@ public sealed record ResultPresentation(bool CreatedFile, string Status, string 
         var reduction = 1 - (double)result.OutputBytes / result.OriginalBytes;
         var summary = $"{original} → {FormatBytes(result.OutputBytes)}，减少 {reduction:P1}";
         return new(true, "已生成 · " + summary,
-            $"已生成压缩文件：{summary}\r\n保存位置：{result.OutputPath}\r\n原文件保留。可播放结果或定位文件；压缩比例不代表画质评价。");
+            $"已生成压缩文件：{summary}\r\n保存位置：{result.OutputPath}\r\n原文件保留。可定位文件或复制保存路径；压缩比例不代表画质评价。");
     }
 
     private static string FormatBytes(long size) => size >= 1_000_000_000 ? $"{size / 1_000_000_000d:F2} GB" : $"{size / 1_000_000d:F2} MB";
