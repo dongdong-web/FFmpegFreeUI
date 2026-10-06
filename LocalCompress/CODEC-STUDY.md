@@ -1,0 +1,44 @@
+# 编码策略试验（2026-10-06）
+
+本轮完成可重复的本地短片段编码对照，没有改动 0.4.0 产品默认策略。
+目的：验证换编码是否能解决实拍收益不足，以及同一组参数在不同片段上的稳定性。
+
+## 方法
+
+使用两段约 10 秒的 1080×1920 实拍和一段约 10 秒的 1920×1080 录屏。两段实拍来自同一个视频的不同位置，不能当成两个独立视频样本。
+比较 x264 slow CRF 20、x265 medium CRF 22/20、SVT-AV1 preset 6 CRF 26/22；均使用 yuv420p、保持尺寸和帧时间、复制首个音轨。
+x265 限制 pools=4、frame-threads=2；SVT-AV1 限制 lp=4。不同编码的质量刻度不等同。
+
+验证每个结果的尺寸、时长和输入 SHA256，测量全帧 SSIM、字节数和实际编码时间。保留变大的实验结果供对照；产品仍会丢弃没有变小的结果。
+录屏 x264 CRF 20 是统一实验对照；当前产品录屏默认 CRF 18，不能把该实验对照误称为产品默认。
+报告和用户素材只留在被 Git 忽略的 artifacts，不提交或上传。
+
+## 第一轮结果
+
+| 片段 | x264 CRF20 | x265 CRF22 | AV1 CRF26 |
+| --- | --- | --- | --- |
+| 实拍开头 | 缩小 1.8%，SSIM 0.990191 | 缩小 33.0%，SSIM 0.986547 | 缩小 31.5%，SSIM 0.987294 |
+| 实拍中段 | 变大 15.8%，SSIM 0.990048 | 缩小 8.8%，SSIM 0.986953 | 变大 4.0%，SSIM 0.988103 |
+| 录屏 | 缩小 53.9%，SSIM 0.997867 | 缩小 37.3%，SSIM 0.997162 | 缩小 45.9%，SSIM 0.999129 |
+
+提高质量后，实拍开头 x265 CRF20 缩小 12.0%（SSIM 0.988859），AV1 CRF22 缩小 8.3%（SSIM 0.989120）；实拍中段两者均变大。
+没有找到在这两个实拍片段上同时明显节省体积、且达到 x264 对照 SSIM 的候选。不能由此推断所有参数都无效，也不能宣称当前结果视觉等效。
+
+## 产品结论与下一步验收条件
+
+本轮证据不支持统一替换默认编码器。后续自动策略应在多个代表位置试压，而非仅试开头；分别考虑兼容播放和长期保存用途，且允许保留原文件。
+不得把 SSIM 阈值解释为肉眼无损。录屏需增加文字区域测量；实拍需增加运动、纹理、暗部的动态对照，并扩大独立素材样本。
+在确认接收设备播放兼容性、动态观感和整段收益之前，候选仅作为实验，不进入默认生产策略。
+
+## 复现
+
+Python 3.8+ 只用于开发试验，用户体验包不需要安装 Python。
+引擎须包含 libx264、libx265、libsvtav1、SSIM；使用可信本机 FFmpeg 构建。
+指定新的本机输出目录，脚本拒绝覆盖已有报告或编码输出。实验只适用于短 SDR 素材；不是产品的 HDR 或隐私边界验证入口。
+
+```powershell
+python LocalCompress/codec-study.py 'D:/tools/ffmpeg/bin' 'artifacts/study-new' 'D:/samples/camera.mp4' 'D:/samples/screen.mp4'
+python LocalCompress/codec-study.py 'D:/tools/ffmpeg/bin' 'artifacts/study-conservative-new' 'D:/samples/camera.mp4' --conservative
+```
+
+质量刻度与兼容性参考：[HandBrake 质量说明](https://handbrake.fr/docs/en/latest/workflow/adjust-quality.html)、[官方场景与设备预设](https://handbrake.fr/docs/en/latest/technical/official-presets.html)。

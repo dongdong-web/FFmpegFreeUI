@@ -87,6 +87,8 @@ dotnet run --project LocalCompress/UiSmoke/LocalCompress.UiSmoke.csproj -c Relea
 
 ## 画质验证
 
+本地实拍与录屏的 H.264/H.265/AV1 对照方法、结果和局限见 [编码策略试验](CODEC-STUDY.md)。该实验没有改变当前产品默认编码，不需要用户安装 Python。
+
 ```powershell
 dotnet run --project LocalCompress/QualityChecks/LocalCompress.QualityChecks.csproj -c Release -- artifacts artifacts/quality-report.md
 ```
