@@ -42,17 +42,18 @@ try
     }
     if (args.Length > 2)
     {
-        if ((args.Length - 2) % 2 != 0) throw new ArgumentException("Use --daily file or --screen file pairs after the report path.");
-        report.Clear().AppendLine("# 本地真实素材试压\n\n使用用户授权目录中的短片段，保留原文件。测试结果只适用于这些片段；SSIM 不是肉眼无损证明。输出留在片段旁，便于本机播放对比。\n\n| 片段 | 场景 | 输出 / 输入字节 | SSIM | 秒数 |\n| --- | --- | --- | --- | --- |" );
+        if ((args.Length - 2) % 2 != 0) throw new ArgumentException("Use --balanced file, --daily file or --screen file pairs after the report path.");
+        report.Clear().AppendLine("# 本地真实素材压缩检查\n\n使用用户授权的本地视频，保留原文件。测试结果只适用于所列素材；SSIM 不是肉眼无损证明。输出留在原件旁，便于本机播放对比。\n\n| 视频 | 方案 | 输出 / 输入字节 | SSIM | 秒数 |\n| --- | --- | --- | --- | --- |" );
         var decisionDetails = new StringBuilder();
         for (var index = 2; index < args.Length; index += 2)
         {
-            var scene = args[index] switch { "--daily" => VideoScene.Daily, "--screen" => VideoScene.Screen, _ => throw new ArgumentException("Unknown scene switch.") };
+            VideoScene? scene = args[index] switch { "--daily" => VideoScene.Daily, "--screen" => VideoScene.Screen, "--balanced" => null, _ => throw new ArgumentException("Unknown profile switch.") };
             var input = CompressionEngine.LocalFile(Path.GetFullPath(args[index + 1]));
             var before = SHA256.HashData(await File.ReadAllBytesAsync(input));
             var info = await engine.ProbeAsync(input, default);
             var watch = Stopwatch.StartNew();
-            var result = await engine.CompressSceneAsync(input, Path.GetDirectoryName(input)!, scene, null, null, default);
+            var result = scene.HasValue ? await engine.CompressSceneAsync(input, Path.GetDirectoryName(input)!, scene.Value, null, null, default)
+                : await engine.CompressBalancedAsync(input, Path.GetDirectoryName(input)!, null, null, default);
             watch.Stop();
             var metric = result.QualityProtected ? "未另存：试压提示画质风险" : result.NotSmaller ? "未另存：没有变小" : (await Ssim(input, result.OutputPath, "")).ToString("F6", CultureInfo.InvariantCulture);
             var outputInfo = await engine.ProbeAsync(result.OutputPath, default);
@@ -60,11 +61,12 @@ try
                 throw new Exception("Real sample dimensions or duration changed.");
             var after = SHA256.HashData(await File.ReadAllBytesAsync(input));
             if (!before.SequenceEqual(after)) throw new Exception("Real sample was modified.");
-            report.AppendLine(FormattableString.Invariant($"| {Path.GetFileName(input)} | {scene} | {result.OutputBytes} / {result.OriginalBytes} | {metric} | {watch.Elapsed.TotalSeconds:F2} |"));
+            report.AppendLine(FormattableString.Invariant($"| {Path.GetFileName(input)} | {scene?.ToString() ?? "Balanced"} | {result.OutputBytes} / {result.OriginalBytes} | {metric} | {watch.Elapsed.TotalSeconds:F2} |"));
+            decisionDetails.AppendLine($"\n## {Path.GetFileName(input)}\n\n结果路径：{result.OutputPath}");
             if (result.Decision is { } decision)
             {
                 Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(decision));
-                decisionDetails.AppendLine($"\n## {Path.GetFileName(input)}\n\n试压决策：质量偏移 {decision.QualityOffset}；保留原件 {decision.PreserveOriginal}；回退原因 {decision.FallbackReason ?? "无"}。\n\n结果路径：{result.OutputPath}");
+                decisionDetails.AppendLine($"\n试压决策：质量偏移 {decision.QualityOffset}；保留原件 {decision.PreserveOriginal}；回退原因 {decision.FallbackReason ?? "无"}。");
                 foreach (var sample in decision.Samples)
                     decisionDetails.AppendLine(FormattableString.Invariant($"\n位置 {sample.Position:F2}s：候选/基线视频字节 {sample.CandidateBytes}/{sample.BaselineBytes}，最差 SSIM {sample.CandidateSsim:F6}/{sample.BaselineSsim:F6}，对应区域最大下降 {sample.MaximumRegionDrop:F6}。"));
             }

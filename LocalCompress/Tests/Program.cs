@@ -39,6 +39,14 @@ try
     Check(info.HasAudio && info.Width == 320 && Math.Abs(info.Duration - 3) < .1, "media probe reads video and audio");
     var first = await engine.CompressAsync(input, root, CompressionQuality.Balanced, null, default);
     Check(first.OutputBytes < first.OriginalBytes && File.Exists(first.OutputPath), "real compression produces a smaller valid MP4");
+    var balanced = await engine.CompressBalancedAsync(input, root, null, null, default);
+    var baselineVideoHash = await Tool(tools.Ffmpeg, "-v", "error", "-i", first.OutputPath, "-map", "0:v:0", "-c:v", "copy", "-f", "hash", "-hash", "sha256", "-");
+    var balancedVideoHash = await Tool(tools.Ffmpeg, "-v", "error", "-i", balanced.OutputPath, "-map", "0:v:0", "-c:v", "copy", "-f", "hash", "-hash", "sha256", "-");
+    Check(baselineVideoHash == balancedVideoHash && balanced.Decision is null && !balanced.QualityProtected,
+        "product balanced profile restores the earlier medium CRF25 video encoding without trial interception");
+    var balancedTarget = await engine.CompressBalancedAsync(input, root, .15, null, default);
+    Check(balancedTarget.OutputBytes <= 150000 && (await engine.ProbeAsync(balancedTarget.OutputPath, default)).HasAudio,
+        "restored balanced profile retains strict target-size two-pass output with audio");
     var tags = await Tool(tools.Ffprobe, "-v", "error", "-show_entries", "format_tags:stream_tags", "-of", "json", first.OutputPath);
     Check(!tags.Contains("private-title-test") && !tags.Contains("private-audio-test"), "optional global and stream metadata is removed");
     var second = await engine.CompressAsync(input, root, CompressionQuality.Small, null, default);
@@ -90,6 +98,9 @@ try
     var outputTimes = await Tool(tools.Ffprobe, frameQuery.Concat([vfrOutput.OutputPath]).ToArray());
     var timestamps = (string value) => value.Split('\n').Select(x => x.Trim().TrimEnd(',')).Where(x => double.TryParse(x, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _)).ToArray();
     Check(timestamps(sourceTimes).SequenceEqual(timestamps(outputTimes)), "screen scene preserves variable frame timing without dropping or duplicating frames");
+    var balancedVfr = await engine.CompressBalancedAsync(vfrInput, root, null, null, default);
+    var balancedTimes = await Tool(tools.Ffprobe, frameQuery.Concat([balancedVfr.OutputPath]).ToArray());
+    Check(timestamps(sourceTimes).SequenceEqual(timestamps(balancedTimes)), "balanced product profile preserves variable frame timing");
     Check(vfrOutput.Decision is { Samples.Count: 3, FallbackReason: null } &&
         vfrOutput.Decision.Samples.All(x => double.IsFinite(x.BaselineSsim) && double.IsFinite(x.CandidateSsim)),
         "screen trial measures full frame and quadrants at three positions in a variable-rate source");
@@ -131,6 +142,9 @@ try
     await Reject(() => engine.CompressAsync(compact, root, CompressionQuality.Quality, null, default), "larger recompression is discarded");
     Check(!File.Exists(Path.Combine(root, "已高度压缩_压缩.mp4")), "non-shrinking job leaves no misleading output");
     var unchanged = await engine.CompressSceneAsync(compact, root, VideoScene.Daily, null, null, default);
+    var balancedCompact = await engine.CompressBalancedAsync(compact, root, null, null, default);
+    Check(balancedCompact.NotSmaller && balancedCompact.OutputPath == compact && balancedCompact.Decision is null,
+        "balanced product profile reports no generated file for non-shrinking results");
     Check(unchanged.NotSmaller && unchanged.OutputPath == compact && !File.Exists(Path.Combine(root, "已高度压缩_压缩.mp4")),
         "scene mode reports no compression needed instead of saving a larger file");
     using var cancellation = new CancellationTokenSource();

@@ -14,15 +14,9 @@ var thread = new Thread(() =>
         using var bitmap = new Bitmap(form.Width, form.Height);
         form.DrawToBitmap(bitmap, new Rectangle(0, 0, form.Width, form.Height));
         bitmap.Save(destination, System.Drawing.Imaging.ImageFormat.Png);
-        foreach (var name in new[] { "quality", "moreProcessing", "resolution", "denoise", "normalize" })
+        foreach (var name in new[] { "quality", "moreProcessing", "resolution", "denoise", "normalize", "scene" })
             if (form.Controls.Find(name, true).Length != 0) throw new Exception("Advanced control still exposed: " + name);
-        var scene = (ComboBox)form.Controls.Find("scene", true).Single();
-        if (scene.Items.Count != 2 || scene.SelectedIndex != 0) throw new Exception("Expected two scenes with daily as default.");
-        scene.SelectedIndex = 1;
-        Application.DoEvents();
-        using var screen = new Bitmap(form.Width, form.Height);
-        form.DrawToBitmap(screen, new Rectangle(0, 0, form.Width, form.Height));
-        screen.Save(Path.Combine(Path.GetDirectoryName(destination)!, "ui-screen-preview.png"), System.Drawing.Imaging.ImageFormat.Png);
+        if (!form.Controls.Find("compressionMode", true).Single().Text.Contains("均衡压缩")) throw new Exception("Expected the restored balanced product mode.");
         var targetOptions = form.Controls.Find("targetOptions", true).Single();
         var limit = (CheckBox)form.Controls.Find("limitSize", true).Single();
         var target = (NumericUpDown)form.Controls.Find("targetMegabytes", true).Single();
@@ -35,16 +29,15 @@ var thread = new Thread(() =>
         targetBitmap.Save(Path.Combine(Path.GetDirectoryName(destination)!, "ui-target-preview.png"), System.Drawing.Imaging.ImageFormat.Png);
         target.Value = 25;
         limit.Checked = false;
-        scene.SelectedIndex = 0;
         Application.DoEvents();
         if (targetOptions.Visible || target.Enabled || target.Value != 25) throw new Exception("Disabling the limit must stop applying it and retain the entered value.");
-        Console.WriteLine("PASS Two scene choices replace advanced controls; daily is the default");
+        Console.WriteLine("PASS Balanced compression is the sole default; conservative scene choices are not exposed");
         Console.WriteLine("PASS Size limit starts disabled and toggles independently of the scene");
         if (args.Length > 1)
         {
             var fixtureRoot = Path.GetFullPath(args[1]);
             typeof(MainForm).GetMethod("AddFiles", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                .Invoke(form, [new[] { Path.Combine(fixtureRoot, "success.mp4"), Path.Combine(fixtureRoot, "texture.mp4"), Path.Combine(fixtureRoot, "broken.mp4") }]);
+                .Invoke(form, [new[] { Path.Combine(fixtureRoot, "success.mp4"), Path.Combine(fixtureRoot, "skipped.mp4"), Path.Combine(fixtureRoot, "broken.mp4") }]);
             var run = (Task)typeof(MainForm).GetMethod("RunBatchAsync", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(form, null)!;
             while (!run.IsCompleted) { Application.DoEvents(); Thread.Sleep(10); }
             run.GetAwaiter().GetResult();

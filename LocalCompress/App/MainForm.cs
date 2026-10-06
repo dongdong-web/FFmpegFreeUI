@@ -15,7 +15,6 @@ public sealed class MainForm : Form
 
     private readonly ToolPaths? _tools = ToolPaths.Find(AppContext.BaseDirectory);
     private readonly ListView _files = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, HideSelection = false, BorderStyle = BorderStyle.None, ShowItemToolTips = true };
-    private readonly ComboBox _scene = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 210, AccessibleName = "视频场景", Name = "scene" };
     private readonly CheckBox _limitSize = new() { Text = "接收方有大小限制", AutoSize = true, Margin = new Padding(0, 9, 14, 0), Name = "limitSize" };
     private readonly NumericUpDown _target = new() { Minimum = .1m, Maximum = 100000, DecimalPlaces = 1, Value = 100, Width = 105, AccessibleName = "每个视频的目标大小 MB", Name = "targetMegabytes" };
     private readonly Button _add = MakeButton("＋ 添加视频");
@@ -28,7 +27,7 @@ public sealed class MainForm : Form
     private readonly TextBox _result = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
         Name = "resultDetail", Text = "处理后会显示是否生成文件、前后大小和保存位置。选择任务可查看详情。", BackColor = Color.White };
     private readonly Label _output = MakeLabel("默认保存在各原视频旁，原文件始终保留。", 10);
-    private readonly Label _status = MakeLabel("添加视频，选择场景后即可开始。", 10);
+    private readonly Label _status = MakeLabel("添加视频后即可开始均衡压缩。", 10);
     private readonly ProgressBar _progress = new() { Dock = DockStyle.Fill, Maximum = 1000, Height = 8 };
     private CancellationTokenSource? _run;
     private string? _outputDirectory;
@@ -51,31 +50,27 @@ public sealed class MainForm : Form
             layout.RowStyles.Add(index == 4 ? new RowStyle(SizeType.Percent, 100) : new RowStyle(SizeType.Absolute, heights[index]));
         layout.Controls.Add(MakeLabel("把视频变小，把文件留在自己手里。", 20, true), 0, 0);
         layout.Controls.Add(MakeLabel("离线处理 · 无账号 · 无上传 · 保留原文件", 11), 0, 1);
-        layout.Controls.Add(MakeLabel("1  添加视频   →   2  选择场景   →   3  开始压缩", 11, true), 0, 2);
+        layout.Controls.Add(MakeLabel("1  添加视频   →   2  按需设置大小上限   →   3  开始压缩", 11, true), 0, 2);
         var fileActions = Flow(_add, _remove, MakeLabel("也可以把视频拖到这里", 10));
         layout.Controls.Add(fileActions, 0, 3);
         _files.Columns.Add("视频", 340);
         _files.Columns.Add("原始大小", 110);
         _files.Columns.Add("状态", 330);
         layout.Controls.Add(_files, 0, 4);
-        _scene.Items.AddRange(["日常视频（默认）", "录屏／课程"]);
-        _scene.SelectedIndex = 0;
-        var sceneHelp = MakeLabel("适合手机实拍、人物和生活记录，优先保持清晰。", 9);
-        _scene.SelectedIndexChanged += (_, _) => sceneHelp.Text = _scene.SelectedIndex == 0
-            ? "适合手机实拍、人物和生活记录，优先保持清晰。"
-            : "更保守地压缩，优先保留小字、图表和操作细节。";
-        layout.Controls.Add(Flow(MakeLabel("视频场景", 10, true), _scene, sceneHelp), 0, 5);
+        var modeLabel = MakeLabel("均衡压缩 · 默认", 10, true);
+        modeLabel.Name = "compressionMode";
+        layout.Controls.Add(Flow(modeLabel, MakeLabel("兼顾体积和画质，无需调整编码参数。", 9)), 0, 5);
         var targetOptions = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Visible = false, Name = "targetOptions", Margin = Padding.Empty };
         targetOptions.Controls.AddRange([MakeLabel("每个视频不超过", 9), _target, MakeLabel("MB", 9)]);
         _target.Enabled = false;
-        var sizeHelp = MakeLabel("先自动试压，再选择方案；保持原尺寸、帧时间和音量。", 9);
+        var sizeHelp = MakeLabel("使用均衡方案，保持原尺寸和帧时间；有损压缩，请保留重要原件。", 9);
         _limitSize.CheckedChanged += (_, _) =>
         {
             targetOptions.Visible = _limitSize.Checked;
             _target.Enabled = _limitSize.Checked && _run is null;
             sizeHelp.Text = _limitSize.Checked
                 ? "按上限分析再编码，耗时更长。目标越小画质越低；1 MB = 100 万字节。"
-                : "先自动试压，再选择方案；保持原尺寸、帧时间和音量。";
+                : "使用均衡方案，保持原尺寸和帧时间；有损压缩，请保留重要原件。";
         };
         layout.Controls.Add(Flow(_limitSize, targetOptions), 0, 6);
         layout.Controls.Add(sizeHelp, 0, 7);
@@ -172,7 +167,6 @@ public sealed class MainForm : Form
         using var cancellation = new CancellationTokenSource();
         _run = cancellation;
         SetRunning(true);
-        var scene = (VideoScene)_scene.SelectedIndex;
         double? targetMegabytes = _limitSize.Checked ? (double)_target.Value : null;
         var engine = new CompressionEngine(_tools);
         int completed = 0, skipped = 0, unsuccessful = 0;
@@ -198,7 +192,7 @@ public sealed class MainForm : Form
                 });
                 try
                 {
-                    var result = await engine.CompressSceneAsync(item.Path, _outputDirectory ?? Path.GetDirectoryName(item.Path)!, scene, targetMegabytes, progress, cancellation.Token);
+                    var result = await engine.CompressBalancedAsync(item.Path, _outputDirectory ?? Path.GetDirectoryName(item.Path)!, targetMegabytes, progress, cancellation.Token);
                     item.Completed = true;
                     var presentation = ResultPresentation.From(result);
                     item.Output = presentation.CreatedFile ? result.OutputPath : null;
@@ -238,7 +232,7 @@ public sealed class MainForm : Form
 
     private void SetRunning(bool running)
     {
-        _add.Enabled = _remove.Enabled = _folder.Enabled = _scene.Enabled = !running;
+        _add.Enabled = _remove.Enabled = _folder.Enabled = !running;
         _limitSize.Enabled = !running;
         _target.Enabled = !running && _limitSize.Checked;
         _cancel.Enabled = running;

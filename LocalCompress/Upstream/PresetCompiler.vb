@@ -22,7 +22,8 @@ Public NotInheritable Class PresetCompiler
                                     Optional passLog As String = "",
                                     Optional scene As Integer = -1,
                                     Optional copyAudio As Boolean = False,
-                                    Optional sceneQualityOffset As Integer = 0) As IReadOnlyList(Of IReadOnlyList(Of String))
+                                    Optional sceneQualityOffset As Integer = 0,
+                                    Optional preserveTiming As Boolean = False) As IReadOnlyList(Of IReadOnlyList(Of String))
         If quality < 0 OrElse quality > 2 Then Throw New ArgumentOutOfRangeException(NameOf(quality))
         If Not {0, 720, 1080}.Contains(maxShortEdge) Then Throw New ArgumentOutOfRangeException(NameOf(maxShortEdge))
         If scene < -1 OrElse scene > 1 Then Throw New ArgumentOutOfRangeException(NameOf(scene))
@@ -100,7 +101,7 @@ Public NotInheritable Class PresetCompiler
                 arguments(logIndex + 1) = passLog
             End If
             arguments.InsertRange(0, {"-nostdin", "-protocol_whitelist", "file,pipe"})
-            If scene >= 0 Then arguments.InsertRange(arguments.Count - 1, {"-fps_mode", "passthrough"})
+            If scene >= 0 OrElse preserveTiming Then arguments.InsertRange(arguments.Count - 1, {"-fps_mode", "passthrough"})
             If Not firstPass Then arguments.InsertRange(arguments.Count - 1, {"-map_metadata:s", "-1", "-movflags", "+faststart"})
             arguments.InsertRange(arguments.Count - 1, {"-progress", "pipe:1", "-nostats"})
             plan.Add(arguments.AsReadOnly())

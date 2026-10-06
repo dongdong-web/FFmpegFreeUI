@@ -8,7 +8,7 @@ namespace LocalCompress.Core;
 
 public enum CompressionQuality { Quality, Balanced, Small }
 public enum VideoScene { Daily, Screen }
-public sealed record ProcessingOptions(int MaxShortEdge = 0, bool ReduceNoise = false, bool NormalizeAudio = false, double? TargetMegabytes = null, VideoScene? Scene = null);
+public sealed record ProcessingOptions(int MaxShortEdge = 0, bool ReduceNoise = false, bool NormalizeAudio = false, double? TargetMegabytes = null, VideoScene? Scene = null, bool BalancedProfile = false);
 public sealed record MediaInfo(double Duration, int Width, int Height, bool HasAudio, bool IsHdr, string AudioCodec = "");
 public sealed record CompressionProgress(double Fraction, string Speed, string Stage = "压缩中");
 public sealed record CompressionResult(string OutputPath, long OriginalBytes, long OutputBytes, bool AlreadyWithinTarget = false, bool NotSmaller = false, int SceneQualityOffset = 0, SceneDecision? Decision = null, bool QualityProtected = false);
@@ -111,12 +111,20 @@ public sealed partial class CompressionEngine(ToolPaths tools)
         CompressAsync(input, outputDirectory, CompressionQuality.Quality, progress, cancellationToken,
             new ProcessingOptions(TargetMegabytes: targetMegabytes, Scene: scene));
 
+    public Task<CompressionResult> CompressBalancedAsync(string input, string outputDirectory, double? targetMegabytes,
+        IProgress<CompressionProgress>? progress, CancellationToken cancellationToken) =>
+        CompressAsync(input, outputDirectory, CompressionQuality.Balanced, progress, cancellationToken,
+            new ProcessingOptions(TargetMegabytes: targetMegabytes, BalancedProfile: true));
+
     public async Task<CompressionResult> CompressAsync(string input, string outputDirectory,
         CompressionQuality quality, IProgress<CompressionProgress>? progress, CancellationToken cancellationToken,
         ProcessingOptions? options = null)
     {
         input = LocalFile(input);
         options ??= new();
+        if (options.BalancedProfile && (options.Scene.HasValue || quality != CompressionQuality.Balanced ||
+            options.MaxShortEdge != 0 || options.ReduceNoise || options.NormalizeAudio))
+            throw new ArgumentException("Balanced profile cannot combine other scene or filter policies.", nameof(options));
         if (options.Scene.HasValue && !Enum.IsDefined(options.Scene.Value)) throw new ArgumentOutOfRangeException(nameof(options));
         long? targetBytes = null;
         if (options.TargetMegabytes is double target)
@@ -168,7 +176,7 @@ public sealed partial class CompressionEngine(ToolPaths tools)
                 var plan = PresetCompiler.BuildPlan(input, temp, (int)quality, options.MaxShortEdge,
                     options.ReduceNoise, options.NormalizeAudio, info.HasAudio, videoBitrate, passLog,
                     options.Scene.HasValue ? (int)options.Scene.Value : -1,
-                    options.Scene.HasValue && !targetBytes.HasValue && info.AudioCodec == "aac", sceneOffset);
+                    options.Scene.HasValue && !targetBytes.HasValue && info.AudioCodec == "aac", sceneOffset, options.BalancedProfile);
                 for (var stageIndex = 0; stageIndex < plan.Count; stageIndex++)
                 {
                     var stageName = targetBytes.HasValue ? (attempt == 0 ? "" : "大小校正 · ") + (stageIndex == 0 ? "分析画面" : "生成视频") : "压缩中";
@@ -215,7 +223,7 @@ public sealed partial class CompressionEngine(ToolPaths tools)
             var outputBytes = new FileInfo(temp).Length;
             if (outputBytes >= originalBytes)
             {
-                if (options.Scene.HasValue)
+                if (options.Scene.HasValue || options.BalancedProfile)
                 {
                     progress?.Report(new(1, speed, "无需压缩"));
                     return new(input, originalBytes, originalBytes, NotSmaller: true, SceneQualityOffset: sceneOffset, Decision: decision);
