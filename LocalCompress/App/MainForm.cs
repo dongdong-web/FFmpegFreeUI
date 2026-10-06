@@ -23,13 +23,15 @@ public sealed class MainForm : Form
     private readonly Button _folder = MakeButton("选择保存位置");
     private readonly Button _start = MakeButton("开始压缩", true);
     private readonly Button _cancel = MakeButton("停止", false);
-    private readonly Button _open = MakeButton("打开结果文件夹");
+    private readonly Button _open = MakeButton("定位文件");
+    private readonly Button _play = MakeButton("播放结果");
+    private readonly TextBox _result = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
+        Name = "resultDetail", Text = "处理后会显示是否生成文件、前后大小和保存位置。选择任务可查看详情。", BackColor = Color.White };
     private readonly Label _output = MakeLabel("默认保存在各原视频旁，原文件始终保留。", 10);
     private readonly Label _status = MakeLabel("添加视频，选择场景后即可开始。", 10);
     private readonly ProgressBar _progress = new() { Dock = DockStyle.Fill, Maximum = 1000, Height = 8 };
     private CancellationTokenSource? _run;
     private string? _outputDirectory;
-    private string? _lastOutput;
     private bool _closeAfterStop;
 
     public MainForm()
@@ -43,8 +45,8 @@ public sealed class MainForm : Form
         ForeColor = Color.FromArgb(31, 42, 58);
         AllowDrop = true;
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(28), ColumnCount = 1, RowCount = 13 };
-        var heights = new[] { 52, 34, 48, 48, 0, 48, 40, 42, 40, 14, 42, 54, 56 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(28), ColumnCount = 1, RowCount = 14 };
+        var heights = new[] { 52, 34, 38, 42, 0, 42, 40, 34, 42, 14, 34, 44, 86, 44 };
         for (var index = 0; index < heights.Length; index++)
             layout.RowStyles.Add(index == 4 ? new RowStyle(SizeType.Percent, 100) : new RowStyle(SizeType.Absolute, heights[index]));
         layout.Controls.Add(MakeLabel("把视频变小，把文件留在自己手里。", 20, true), 0, 0);
@@ -80,14 +82,21 @@ public sealed class MainForm : Form
         layout.Controls.Add(Flow(_folder, _output), 0, 8);
         layout.Controls.Add(_progress, 0, 9);
         layout.Controls.Add(_status, 0, 10);
-        layout.Controls.Add(Flow(_start, _cancel, _open), 0, 11);
+        _open.Name = "locateResult";
+        _play.Name = "playResult";
+        _status.Name = "batchStatus";
+        _files.Name = "videoFiles";
+        layout.Controls.Add(Flow(_start, _cancel, _play, _open), 0, 11);
+        layout.Controls.Add(_result, 0, 12);
         var engineLabel = MakeLabel(_tools is null
             ? "请使用完整体验包，包内自带本地处理引擎。"
             : "本地处理 · 输出 MP4 · 保留首个音轨 · 原文件不覆盖\n暂不支持 HDR、字幕和多音轨保留；重要视频请保留原件。", 9);
-        layout.Controls.Add(engineLabel, 0, 12);
+        layout.Controls.Add(engineLabel, 0, 13);
         Controls.Add(layout);
         _cancel.Enabled = false;
         _open.Enabled = false;
+        _play.Enabled = false;
+        _files.SelectedIndexChanged += (_, _) => UpdateResult();
         UpdateStart();
 
         _add.Click += (_, _) =>
@@ -100,6 +109,7 @@ public sealed class MainForm : Form
         {
             foreach (ListViewItem item in _files.SelectedItems) _files.Items.Remove(item);
             UpdateStart();
+            UpdateResult();
         };
         _folder.Click += (_, _) =>
         {
@@ -113,13 +123,8 @@ public sealed class MainForm : Form
         };
         _start.Click += async (_, _) => await RunBatchAsync();
         _cancel.Click += (_, _) => { _run?.Cancel(); _cancel.Enabled = false; _status.Text = "正在停止，原文件不会改动…"; };
-        _open.Click += (_, _) =>
-        {
-            if (_lastOutput is null) return;
-            var start = new ProcessStartInfo("explorer.exe") { UseShellExecute = false };
-            start.ArgumentList.Add(Path.GetDirectoryName(_lastOutput)!);
-            Process.Start(start)?.Dispose();
-        };
+        _open.Click += (_, _) => OpenSelectedResult(false);
+        _play.Click += (_, _) => OpenSelectedResult(true);
         _files.DoubleClick += (_, _) =>
         {
             if (_files.SelectedItems.Count == 0) return;
@@ -170,7 +175,7 @@ public sealed class MainForm : Form
         var scene = (VideoScene)_scene.SelectedIndex;
         double? targetMegabytes = _limitSize.Checked ? (double)_target.Value : null;
         var engine = new CompressionEngine(_tools);
-        int completed = 0, unsuccessful = 0;
+        int completed = 0, skipped = 0, unsuccessful = 0;
         try
         {
             for (var i = 0; i < jobs.Length; i++)
@@ -178,6 +183,9 @@ public sealed class MainForm : Form
                 if (cancellation.IsCancellationRequested) break;
                 var row = jobs[i];
                 var item = (VideoItem)row.Tag!;
+                foreach (ListViewItem selected in _files.SelectedItems) selected.Selected = false;
+                row.Selected = true;
+                row.EnsureVisible();
                 row.SubItems[2].Text = "正在读取视频…";
                 _status.Text = $"正在处理 {i + 1}/{jobs.Length}：{Path.GetFileName(item.Path)}";
                 var batchIndex = i;
@@ -192,12 +200,12 @@ public sealed class MainForm : Form
                 {
                     var result = await engine.CompressSceneAsync(item.Path, _outputDirectory ?? Path.GetDirectoryName(item.Path)!, scene, targetMegabytes, progress, cancellation.Token);
                     item.Completed = true;
-                    item.Output = result.OutputPath;
-                    _lastOutput = result.OutputPath;
-                    var reduction = 1 - (double)result.OutputBytes / result.OriginalBytes;
-                    row.SubItems[2].Text = result.QualityProtected ? "试压提示画质风险 · 保留原文件" : result.NotSmaller ? "无需压缩 · 保留原文件" : result.AlreadyWithinTarget ? "已符合目标 · 无需压缩" : $"完成 · {FormatBytes(result.OutputBytes)} · 减少 {reduction:P0}";
-                    item.Detail = result.QualityProtected ? "试压结果未达到保守画质指标，已保留原文件，没有生成整段压缩结果。指标不能代替肉眼判断。\n" + result.OutputPath : result.NotSmaller ? "按保持清晰的方案处理后没有变小，已丢弃临时结果并保留原文件。\n" + result.OutputPath : result.AlreadyWithinTarget ? "原视频已经在目标大小以内，未生成重复文件。\n" + result.OutputPath : $"已保存：{result.OutputPath}\n原始大小：{FormatBytes(result.OriginalBytes)}\n压缩后：{FormatBytes(result.OutputBytes)}\n原文件保留。";
-                    completed++;
+                    var presentation = ResultPresentation.From(result);
+                    item.Output = presentation.CreatedFile ? result.OutputPath : null;
+                    row.SubItems[2].Text = presentation.Status;
+                    item.Detail = presentation.Detail;
+                    if (presentation.CreatedFile) completed++; else skipped++;
+                    UpdateResult();
                 }
                 catch (OperationCanceledException)
                 {
@@ -213,12 +221,12 @@ public sealed class MainForm : Form
                     item.Detail = ex.Message;
                     unsuccessful++;
                 }
-                finally { active = false; }
+                finally { active = false; UpdateResult(); }
                 _progress.Value = (i + 1) * 1000 / jobs.Length;
             }
             _status.Text = cancellation.IsCancellationRequested
-                ? $"已停止。完成 {completed} 个视频，原文件全部保留。"
-                : $"处理结束：完成 {completed} 个，未完成 {unsuccessful} 个。原文件全部保留。";
+                ? $"已停止：已压缩 {completed} 个，已跳过 {skipped} 个，失败 {unsuccessful} 个。原文件保留。"
+                : $"处理结束：已压缩 {completed} 个，已跳过 {skipped} 个，失败 {unsuccessful} 个。原文件保留。";
         }
         finally
         {
@@ -234,8 +242,38 @@ public sealed class MainForm : Form
         _limitSize.Enabled = !running;
         _target.Enabled = !running && _limitSize.Checked;
         _cancel.Enabled = running;
-        _open.Enabled = !running && _lastOutput is not null;
+        UpdateResult();
         UpdateStart();
+    }
+
+    private string? SelectedOutput()
+    {
+        if (_files.SelectedItems.Count != 1) return null;
+        var output = ((VideoItem)_files.SelectedItems[0].Tag!).Output;
+        return output is not null && File.Exists(output) ? output : null;
+    }
+
+    private void OpenSelectedResult(bool play)
+    {
+        var output = SelectedOutput();
+        if (output is null) { UpdateResult(); return; }
+        try
+        {
+            var start = new ProcessStartInfo(play ? output : "explorer.exe") { UseShellExecute = play };
+            if (!play) { start.ArgumentList.Add("/select,"); start.ArgumentList.Add(output); }
+            Process.Start(start)?.Dispose();
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            MessageBox.Show(this, "无法打开结果，请复制下方路径，在资源管理器或播放器中打开。\n" + ex.Message, "打开结果");
+        }
+    }
+
+    private void UpdateResult()
+    {
+        _result.Text = _files.SelectedItems.Count == 1 ? ((VideoItem)_files.SelectedItems[0].Tag!).Detail : "选择任务查看处理结果。";
+        if (_result.Text.Length == 0) _result.Text = "等待处理，尚未生成压缩文件。";
+        _open.Enabled = _play.Enabled = _run is null && SelectedOutput() is not null;
     }
 
     private void UpdateStart() => _start.Enabled = _run is null && _tools is not null && _files.Items.Cast<ListViewItem>().Any(x => !((VideoItem)x.Tag!).Completed);
