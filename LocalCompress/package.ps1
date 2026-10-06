@@ -21,6 +21,7 @@ Copy-Item -LiteralPath (Join-Path $engineDirectory 'LICENSE') -Destination (Join
 Copy-Item -LiteralPath (Join-Path $engineDirectory 'README.txt') -Destination (Join-Path $licenseDirectory 'FFmpeg-build-README.txt')
 Copy-Item -LiteralPath (Join-Path $repoDirectory 'LICENSE.txt') -Destination (Join-Path $licenseDirectory 'FFmpegFreeUI-MIT.txt')
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination (Join-Path $buildDirectory '使用说明.md')
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'CODEC-STUDY.md') -Destination (Join-Path $buildDirectory 'CODEC-STUDY.md')
 $packageLocation = (& $DotnetPath nuget locals global-packages --list) -replace '^global-packages:\s*', ''
 if ($LASTEXITCODE -ne 0) { throw 'Cannot locate runtime license files.' }
 foreach ($package in @('microsoft.netcore.app.runtime.win-x64', 'microsoft.windowsdesktop.app.runtime.win-x64')) {

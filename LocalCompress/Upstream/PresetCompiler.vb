@@ -21,14 +21,19 @@ Public NotInheritable Class PresetCompiler
                                     Optional videoBitrate As Integer = 0,
                                     Optional passLog As String = "",
                                     Optional scene As Integer = -1,
-                                    Optional copyAudio As Boolean = False) As IReadOnlyList(Of IReadOnlyList(Of String))
+                                    Optional copyAudio As Boolean = False,
+                                    Optional sceneQualityOffset As Integer = 0) As IReadOnlyList(Of IReadOnlyList(Of String))
         If quality < 0 OrElse quality > 2 Then Throw New ArgumentOutOfRangeException(NameOf(quality))
         If Not {0, 720, 1080}.Contains(maxShortEdge) Then Throw New ArgumentOutOfRangeException(NameOf(maxShortEdge))
         If scene < -1 OrElse scene > 1 Then Throw New ArgumentOutOfRangeException(NameOf(scene))
+        If sceneQualityOffset < 0 OrElse sceneQualityOffset > If(scene = 1, 2, 1) OrElse
+            (sceneQualityOffset <> 0 AndAlso (scene < 0 OrElse videoBitrate <> 0)) Then
+            Throw New ArgumentOutOfRangeException(NameOf(sceneQualityOffset))
+        End If
         If scene >= 0 AndAlso (maxShortEdge <> 0 OrElse reduceNoise OrElse normalizeAudio) Then
             Throw New ArgumentException("Scene profiles preserve size and do not apply noise or loudness filters.")
         End If
-        Dim crf = If(scene = -1, {"20", "25", "30"}(quality), If(scene = 0, "20", "18"))
+        Dim crf = If(scene = -1, {"20", "25", "30"}(quality), (If(scene = 0, 20, 18) + sceneQualityOffset).ToString(CultureInfo.InvariantCulture))
         Dim preset As New 预设数据_v6 With {
             .输出容器 = "mp4",
             .视频参数_编码器_类型 = 预设数据_v6.视频编码器类型.视频,

@@ -66,14 +66,14 @@ public sealed class MainForm : Form
         var targetOptions = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Visible = false, Name = "targetOptions", Margin = Padding.Empty };
         targetOptions.Controls.AddRange([MakeLabel("每个视频不超过", 9), _target, MakeLabel("MB", 9)]);
         _target.Enabled = false;
-        var sizeHelp = MakeLabel("默认保持原尺寸、流畅度和音量；尽量缩小，不强行压糊。", 9);
+        var sizeHelp = MakeLabel("先自动试压，再选择方案；保持原尺寸、帧时间和音量。", 9);
         _limitSize.CheckedChanged += (_, _) =>
         {
             targetOptions.Visible = _limitSize.Checked;
             _target.Enabled = _limitSize.Checked && _run is null;
             sizeHelp.Text = _limitSize.Checked
                 ? "按上限分析再编码，耗时更长。目标越小画质越低；1 MB = 100 万字节。"
-                : "默认保持原尺寸、流畅度和音量；尽量缩小，不强行压糊。";
+                : "先自动试压，再选择方案；保持原尺寸、帧时间和音量。";
         };
         layout.Controls.Add(Flow(_limitSize, targetOptions), 0, 6);
         layout.Controls.Add(sizeHelp, 0, 7);
@@ -195,8 +195,8 @@ public sealed class MainForm : Form
                     item.Output = result.OutputPath;
                     _lastOutput = result.OutputPath;
                     var reduction = 1 - (double)result.OutputBytes / result.OriginalBytes;
-                    row.SubItems[2].Text = result.NotSmaller ? "无需压缩 · 保留原文件" : result.AlreadyWithinTarget ? "已符合目标 · 无需压缩" : $"完成 · {FormatBytes(result.OutputBytes)} · 减少 {reduction:P0}";
-                    item.Detail = result.NotSmaller ? "按保持清晰的方案处理后没有变小，已丢弃临时结果并保留原文件。\n" + result.OutputPath : result.AlreadyWithinTarget ? "原视频已经在目标大小以内，未生成重复文件。\n" + result.OutputPath : $"已保存：{result.OutputPath}\n原始大小：{FormatBytes(result.OriginalBytes)}\n压缩后：{FormatBytes(result.OutputBytes)}\n原文件保留。";
+                    row.SubItems[2].Text = result.QualityProtected ? "试压提示画质风险 · 保留原文件" : result.NotSmaller ? "无需压缩 · 保留原文件" : result.AlreadyWithinTarget ? "已符合目标 · 无需压缩" : $"完成 · {FormatBytes(result.OutputBytes)} · 减少 {reduction:P0}";
+                    item.Detail = result.QualityProtected ? "试压结果未达到保守画质指标，已保留原文件，没有生成整段压缩结果。指标不能代替肉眼判断。\n" + result.OutputPath : result.NotSmaller ? "按保持清晰的方案处理后没有变小，已丢弃临时结果并保留原文件。\n" + result.OutputPath : result.AlreadyWithinTarget ? "原视频已经在目标大小以内，未生成重复文件。\n" + result.OutputPath : $"已保存：{result.OutputPath}\n原始大小：{FormatBytes(result.OriginalBytes)}\n压缩后：{FormatBytes(result.OutputBytes)}\n原文件保留。";
                     completed++;
                 }
                 catch (OperationCanceledException)

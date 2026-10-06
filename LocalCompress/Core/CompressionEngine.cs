@@ -11,7 +11,7 @@ public enum VideoScene { Daily, Screen }
 public sealed record ProcessingOptions(int MaxShortEdge = 0, bool ReduceNoise = false, bool NormalizeAudio = false, double? TargetMegabytes = null, VideoScene? Scene = null);
 public sealed record MediaInfo(double Duration, int Width, int Height, bool HasAudio, bool IsHdr, string AudioCodec = "");
 public sealed record CompressionProgress(double Fraction, string Speed, string Stage = "压缩中");
-public sealed record CompressionResult(string OutputPath, long OriginalBytes, long OutputBytes, bool AlreadyWithinTarget = false, bool NotSmaller = false);
+public sealed record CompressionResult(string OutputPath, long OriginalBytes, long OutputBytes, bool AlreadyWithinTarget = false, bool NotSmaller = false, int SceneQualityOffset = 0, SceneDecision? Decision = null, bool QualityProtected = false);
 public sealed record ToolPaths(string Ffmpeg, string Ffprobe)
 {
     public static ToolPaths? Find(string appDirectory)
@@ -34,7 +34,7 @@ public sealed record ToolPaths(string Ffmpeg, string Ffprobe)
     }
 }
 
-public sealed class CompressionEngine(ToolPaths tools)
+public sealed partial class CompressionEngine(ToolPaths tools)
 {
     public static string LocalFile(string path)
     {
@@ -143,7 +143,22 @@ public sealed class CompressionEngine(ToolPaths tools)
         var passLog = temp + ".pass";
         try
         {
-            double fraction = 0;
+            var sceneOffset = 0;
+            SceneDecision? decision = null;
+            var analysisFraction = 0d;
+            if (options.Scene.HasValue && !targetBytes.HasValue && info.Duration >= 8)
+            {
+                decision = await AnalyzeSceneAsync(input, info, options.Scene.Value, temp, progress, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (decision.PreserveOriginal)
+                {
+                    progress?.Report(new(1, "", "保留原文件"));
+                    return new(input, originalBytes, originalBytes, Decision: decision, QualityProtected: true);
+                }
+                sceneOffset = decision.QualityOffset;
+                analysisFraction = .15;
+            }
+            double fraction = analysisFraction;
             string speed = "";
             var lastReport = Stopwatch.StartNew();
             var videoBitrate = targetBytes is long budget ? CalculateTargetBitrate(budget, info.Duration, info.HasAudio) : 0;
@@ -153,7 +168,7 @@ public sealed class CompressionEngine(ToolPaths tools)
                 var plan = PresetCompiler.BuildPlan(input, temp, (int)quality, options.MaxShortEdge,
                     options.ReduceNoise, options.NormalizeAudio, info.HasAudio, videoBitrate, passLog,
                     options.Scene.HasValue ? (int)options.Scene.Value : -1,
-                    options.Scene.HasValue && !targetBytes.HasValue && info.AudioCodec == "aac");
+                    options.Scene.HasValue && !targetBytes.HasValue && info.AudioCodec == "aac", sceneOffset);
                 for (var stageIndex = 0; stageIndex < plan.Count; stageIndex++)
                 {
                     var stageName = targetBytes.HasValue ? (attempt == 0 ? "" : "大小校正 · ") + (stageIndex == 0 ? "分析画面" : "生成视频") : "压缩中";
@@ -170,7 +185,7 @@ public sealed class CompressionEngine(ToolPaths tools)
                                 {
                                     var stageFraction = Math.Clamp(microseconds / 1_000_000 / info.Duration, 0, 1);
                                     // Reserve space for a possible correction, without moving backwards.
-                                    var candidate = targetBytes.HasValue ? (attempt == 0 ? (stageIndex + stageFraction) / plan.Count * .9 : .9 + (stageIndex + stageFraction) / plan.Count * .09) : stageFraction * .99;
+                                    var candidate = targetBytes.HasValue ? (attempt == 0 ? (stageIndex + stageFraction) / plan.Count * .9 : .9 + (stageIndex + stageFraction) / plan.Count * .09) : analysisFraction + stageFraction * (.99 - analysisFraction);
                                     fraction = Math.Max(fraction, Math.Min(candidate, .99));
                                 }
                                 break;
@@ -203,7 +218,7 @@ public sealed class CompressionEngine(ToolPaths tools)
                 if (options.Scene.HasValue)
                 {
                     progress?.Report(new(1, speed, "无需压缩"));
-                    return new(input, originalBytes, originalBytes, NotSmaller: true);
+                    return new(input, originalBytes, originalBytes, NotSmaller: true, SceneQualityOffset: sceneOffset, Decision: decision);
                 }
                 throw new InvalidOperationException("这个视频已经很紧凑，本次结果没有变小。已丢弃压缩结果，原文件未改动；可以尝试“体积优先”。");
             }
@@ -212,7 +227,7 @@ public sealed class CompressionEngine(ToolPaths tools)
             for (var index = 0; ; index++)
             {
                 var final = Path.Combine(outputDirectory, stem + (index == 0 ? "" : $" ({index})") + ".mp4");
-                try { File.Move(temp, final, false); progress?.Report(new(1, speed)); return new(final, originalBytes, outputBytes); }
+                try { File.Move(temp, final, false); progress?.Report(new(1, speed)); return new(final, originalBytes, outputBytes, SceneQualityOffset: sceneOffset, Decision: decision); }
                 catch (IOException) when (File.Exists(final)) { }
             }
         }

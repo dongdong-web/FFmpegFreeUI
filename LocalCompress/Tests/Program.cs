@@ -83,13 +83,16 @@ try
     var convertedAudio = await engine.CompressSceneAsync(otherAudio, root, VideoScene.Daily, null, null, default);
     Check((await engine.ProbeAsync(convertedAudio.OutputPath, default)).AudioCodec == "aac", "incompatible source audio falls back to AAC for MP4 playback");
     var vfrInput = Path.Combine(root, "variable frame rate.mp4");
-    await Tool(tools.Ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30", "-t", "3", "-vf", "select='not(mod(n,2))+not(mod(n,3))'", "-fps_mode", "vfr", "-c:v", "libx264", "-crf", "0", vfrInput);
+    await Tool(tools.Ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30", "-t", "9", "-vf", "select='not(mod(n,2))+not(mod(n,3))'", "-fps_mode", "vfr", "-c:v", "libx264", "-crf", "0", vfrInput);
     var vfrOutput = await engine.CompressSceneAsync(vfrInput, root, VideoScene.Screen, null, null, default);
     var frameQuery = new[] { "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=best_effort_timestamp_time", "-of", "csv=p=0" };
     var sourceTimes = await Tool(tools.Ffprobe, frameQuery.Concat([vfrInput]).ToArray());
     var outputTimes = await Tool(tools.Ffprobe, frameQuery.Concat([vfrOutput.OutputPath]).ToArray());
     var timestamps = (string value) => value.Split('\n').Select(x => x.Trim().TrimEnd(',')).Where(x => double.TryParse(x, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _)).ToArray();
     Check(timestamps(sourceTimes).SequenceEqual(timestamps(outputTimes)), "screen scene preserves variable frame timing without dropping or duplicating frames");
+    Check(vfrOutput.Decision is { Samples.Count: 3, FallbackReason: null } &&
+        vfrOutput.Decision.Samples.All(x => double.IsFinite(x.BaselineSsim) && double.IsFinite(x.CandidateSsim)),
+        "screen trial measures full frame and quadrants at three positions in a variable-rate source");
     var silentTarget = await engine.CompressAsync(noAudio, root, CompressionQuality.Balanced, null, default, new ProcessingOptions(TargetMegabytes: .1));
     Check(silentTarget.OutputBytes <= 100000 && !(await engine.ProbeAsync(silentTarget.OutputPath, default)).HasAudio,
         "two-pass target-size compression works without an audio track");
@@ -136,6 +139,35 @@ try
     var longVideo = Path.Combine(root, "取消测试.mp4");
     await Tool(tools.Ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "15", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "0", longVideo);
     using var activeCancellation = new CancellationTokenSource();
+    var sceneFractions = new List<double>();
+    var sceneStages = new List<string>();
+    var longScene = await engine.CompressSceneAsync(longVideo, root, VideoScene.Daily, null,
+        new InlineProgress(p => { sceneFractions.Add(p.Fraction); sceneStages.Add(p.Stage); }), default);
+    Check(sceneStages.Count(x => x == "试压画面") == 6 && sceneFractions.SequenceEqual(sceneFractions.Order()),
+        "scene trial covers three positions and maintains monotonic progress into final encoding");
+    Check(longScene.SceneQualityOffset is 0 or 1 && (await engine.ProbeAsync(longScene.OutputPath, default)).Width == 640 &&
+        !Directory.EnumerateFiles(root, ".localcompress-*").Any(), "adaptive scene retains dimensions and cleans six trial outputs");
+    Console.WriteLine("Selected daily quality offset: " + longScene.SceneQualityOffset);
+    Check(longScene.Decision is { Samples.Count: 3, FallbackReason: null } &&
+        longScene.Decision.Samples.All(x => double.IsFinite(x.BaselineSsim) && double.IsFinite(x.CandidateSsim)),
+        "trial actually measures three decoded source windows rather than silently falling back");
+    using var sampleCancellation = new CancellationTokenSource();
+    await Reject(() => engine.CompressSceneAsync(longVideo, root, VideoScene.Daily, null,
+        new InlineProgress(p => { if (p.Stage == "试压画面" && p.Fraction > 0) sampleCancellation.Cancel(); }), sampleCancellation.Token),
+        "scene trial can be cancelled after a completed sample");
+    Check(sampleCancellation.IsCancellationRequested && !Directory.EnumerateFiles(root, ".localcompress-*").Any(),
+        "trial cancellation cleans all sample files and preserves input");
+    var texture = Path.Combine(root, "细碎纹理.mp4");
+    await Tool(tools.Ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24,noise=alls=6:allf=t:all_seed=123",
+        "-t", "9", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "0", texture);
+    var textureHash = SHA256.HashData(await File.ReadAllBytesAsync(texture));
+    var protectedTexture = await engine.CompressSceneAsync(texture, root, VideoScene.Daily, null, null, default);
+    var textureAfter = SHA256.HashData(await File.ReadAllBytesAsync(texture));
+    Check(protectedTexture.QualityProtected && protectedTexture.OutputPath == texture &&
+        protectedTexture.Decision is { Samples.Count: 3, PreserveOriginal: true, FallbackReason: null } &&
+        textureHash.SequenceEqual(textureAfter) &&
+        !Directory.EnumerateFiles(root, ".localcompress-*").Any() && !File.Exists(Path.Combine(root, "细碎纹理_压缩.mp4")),
+        "texture trial protects the original when even the baseline fails the quality floor, without encoding a whole result");
     var cancelProgress = new InlineProgress(_ => activeCancellation.Cancel());
     await Reject(() => engine.CompressAsync(longVideo, root, CompressionQuality.Balanced, cancelProgress, activeCancellation.Token), "running encoder can be cancelled");
     Check(activeCancellation.IsCancellationRequested && File.Exists(longVideo), "in-flight cancellation leaves the original intact");

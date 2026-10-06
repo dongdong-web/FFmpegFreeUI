@@ -42,3 +42,11 @@ python LocalCompress/codec-study.py 'D:/tools/ffmpeg/bin' 'artifacts/study-conse
 ```
 
 质量刻度与兼容性参考：[HandBrake 质量说明](https://handbrake.fr/docs/en/latest/workflow/adjust-quality.html)、[官方场景与设备预设](https://handbrake.fr/docs/en/latest/technical/official-presets.html)。
+
+## 后续：0.5 自动试压
+
+0.5 保持 H.264 播放兼容性，加入三处试压，在原场景与小幅调整的候选之间选择；规则见使用说明。
+对同一实拍开头，整段短片输出从 11,919,470 字节降到 10,604,108 字节（输入 12,138,357 字节），减少比例从 1.8% 到 12.6%；全帧 SSIM 从 0.990191 到 0.989107。
+实拍中段仍没有变小，保留原文件；录屏保留基线，缩小 47.5%。这些依然只是短片段结果，未做完整动态观感验收。
+固定噪声纹理测试显示基线也可能低于最低指标，因此新增“试压提示画质风险”状态：不生成整段压缩结果，保留原件。
+没有引入 H.265/AV1 默认切换，未宣称最优或视觉无损。

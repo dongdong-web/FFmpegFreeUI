@@ -44,6 +44,7 @@ try
     {
         if ((args.Length - 2) % 2 != 0) throw new ArgumentException("Use --daily file or --screen file pairs after the report path.");
         report.Clear().AppendLine("# 本地真实素材试压\n\n使用用户授权目录中的短片段，保留原文件。测试结果只适用于这些片段；SSIM 不是肉眼无损证明。输出留在片段旁，便于本机播放对比。\n\n| 片段 | 场景 | 输出 / 输入字节 | SSIM | 秒数 |\n| --- | --- | --- | --- | --- |" );
+        var decisionDetails = new StringBuilder();
         for (var index = 2; index < args.Length; index += 2)
         {
             var scene = args[index] switch { "--daily" => VideoScene.Daily, "--screen" => VideoScene.Screen, _ => throw new ArgumentException("Unknown scene switch.") };
@@ -53,15 +54,23 @@ try
             var watch = Stopwatch.StartNew();
             var result = await engine.CompressSceneAsync(input, Path.GetDirectoryName(input)!, scene, null, null, default);
             watch.Stop();
-            var metric = result.NotSmaller ? "未另存：没有变小" : (await Ssim(input, result.OutputPath, "")).ToString("F6", CultureInfo.InvariantCulture);
+            var metric = result.QualityProtected ? "未另存：试压提示画质风险" : result.NotSmaller ? "未另存：没有变小" : (await Ssim(input, result.OutputPath, "")).ToString("F6", CultureInfo.InvariantCulture);
             var outputInfo = await engine.ProbeAsync(result.OutputPath, default);
             if (outputInfo.Width != info.Width || outputInfo.Height != info.Height || Math.Abs(info.Duration - outputInfo.Duration) > .1)
                 throw new Exception("Real sample dimensions or duration changed.");
             var after = SHA256.HashData(await File.ReadAllBytesAsync(input));
             if (!before.SequenceEqual(after)) throw new Exception("Real sample was modified.");
             report.AppendLine(FormattableString.Invariant($"| {Path.GetFileName(input)} | {scene} | {result.OutputBytes} / {result.OriginalBytes} | {metric} | {watch.Elapsed.TotalSeconds:F2} |"));
-            Console.WriteLine($"PASS Real {Path.GetFileName(input)}: {result.OutputBytes}/{result.OriginalBytes} bytes, SSIM {metric}, original hash unchanged");
+            if (result.Decision is { } decision)
+            {
+                Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(decision));
+                decisionDetails.AppendLine($"\n## {Path.GetFileName(input)}\n\n试压决策：质量偏移 {decision.QualityOffset}；保留原件 {decision.PreserveOriginal}；回退原因 {decision.FallbackReason ?? "无"}。\n\n结果路径：{result.OutputPath}");
+                foreach (var sample in decision.Samples)
+                    decisionDetails.AppendLine(FormattableString.Invariant($"\n位置 {sample.Position:F2}s：候选/基线视频字节 {sample.CandidateBytes}/{sample.BaselineBytes}，最差 SSIM {sample.CandidateSsim:F6}/{sample.BaselineSsim:F6}，对应区域最大下降 {sample.MaximumRegionDrop:F6}。"));
+            }
+            Console.WriteLine($"PASS Real {Path.GetFileName(input)}: {result.OutputBytes}/{result.OriginalBytes} bytes, SSIM {metric}, scene offset {result.SceneQualityOffset}, original hash unchanged");
         }
+        report.Append(decisionDetails);
         report.AppendLine("\n尺寸和时长已检查，输入 SHA256 不变。尚需用户在原观看设备上播放对比，尤其关注运动、暗部与小字。大小限制模式不受这些恒定质量结果保证。");
     }
     else report.AppendLine("\n录屏指标只统计文字附近的 700×120 区域，避免大片空白掩盖文字损失。阈值用于这组固定素材的回归，不代表其他视频的质量门槛。\n\n下一步仍需真实实拍、暗部、运动和用户录屏的动态观感验收。大小限制模式不受这些恒定质量结果保证。");
