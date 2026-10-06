@@ -69,12 +69,20 @@ Partial Public Class 预设管理_v6
     End Function
 
     Public Shared Function 获取命令行进程名(阶段 As 预设数据_v6.命令行阶段) As String
+#If LOCALCOMPRESS_HEADLESS Then
+        Return If(阶段 = 预设数据_v6.命令行阶段.FFprobe获取时长, "ffprobe", "ffmpeg")
+#Else
         If 阶段 = 预设数据_v6.命令行阶段.FFprobe获取时长 Then Return 格式化命令行进程名(设置_v6.获取FFprobe进程文件名())
         Return 格式化命令行进程名(获取当前FFmpeg进程文件名())
+#End If
     End Function
 
     Private Shared Function 获取当前FFmpeg进程文件名() As String
+#If LOCALCOMPRESS_HEADLESS Then
+        Return "ffmpeg"
+#Else
         Return 设置_v6.获取FFmpeg进程文件名()
+#End If
     End Function
 
     Private Shared Function 格式化命令行进程名(value As String) As String

@@ -5,4 +5,5 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Upstream/LocalCompress.Upstream.vbproj" /></ItemGroup>
 </Project>

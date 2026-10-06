@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using LocalCompress.Core;
+using LocalCompress.Upstream;
 
 static void Check(bool condition, string message)
 { if (!condition) throw new Exception(message); Console.WriteLine("PASS " + message); }
@@ -18,7 +19,7 @@ static async Task<string> Tool(string executable, params string[] args)
 static async Task Reject(Func<Task> action, string name)
 {
     try { await action(); }
-    catch (Exception ex) when (ex is InvalidOperationException or FileNotFoundException or OperationCanceledException)
+    catch (Exception ex) when (ex is InvalidOperationException or FileNotFoundException or OperationCanceledException or ArgumentException)
     { Console.WriteLine("PASS " + name); return; }
     throw new Exception("Expected rejection: " + name);
 }
@@ -48,6 +49,29 @@ try
     await Tool(tools.Ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24", "-t", "2", "-c:v", "libx264", "-crf", "0", noAudio);
     var silent = await engine.CompressAsync(noAudio, root, CompressionQuality.Quality, null, default);
     Check(!(await engine.ProbeAsync(silent.OutputPath, default)).HasAudio, "videos without audio succeed");
+    var processed = await engine.CompressAsync(input, root, CompressionQuality.Balanced, null, default,
+        new ProcessingOptions(720, ReduceNoise: true, NormalizeAudio: true));
+    var processedInfo = await engine.ProbeAsync(processed.OutputPath, default);
+    Check(processedInfo.Width == 320 && processedInfo.Height == 240 && processedInfo.HasAudio,
+        "upstream scaling never enlarges small videos and combines noise reduction with loudness adjustment");
+    var silentProcessed = await engine.CompressAsync(noAudio, root, CompressionQuality.Balanced, null, default,
+        new ProcessingOptions(NormalizeAudio: true));
+    Check(!(await engine.ProbeAsync(silentProcessed.OutputPath, default)).HasAudio,
+        "loudness adjustment is safely skipped for videos without audio");
+    var landscape = Path.Combine(root, "横屏 缩小.mp4");
+    await Tool(tools.Ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x800:rate=24", "-t", "1", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "0", landscape);
+    var landscapeOutput = await engine.CompressAsync(landscape, root, CompressionQuality.Balanced, null, default, new ProcessingOptions(720));
+    var landscapeInfo = await engine.ProbeAsync(landscapeOutput.OutputPath, default);
+    Check(landscapeInfo.Width == 1152 && landscapeInfo.Height == 720, "upstream preset scales landscape video to 720p with aspect ratio retained");
+    var portrait = Path.Combine(root, "竖屏 缩小.mp4");
+    await Tool(tools.Ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=800x1280:rate=24", "-t", "1", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "0", portrait);
+    var portraitOutput = await engine.CompressAsync(portrait, root, CompressionQuality.Balanced, null, default, new ProcessingOptions(720));
+    var portraitInfo = await engine.ProbeAsync(portraitOutput.OutputPath, default);
+    Check(portraitInfo.Width == 720 && portraitInfo.Height == 1152, "upstream preset scales portrait video correctly");
+    await Reject(() => engine.CompressAsync(input, root, CompressionQuality.Balanced, null, default,
+        new ProcessingOptions(999)), "unsupported options cannot inject arbitrary preset arguments");
+    Check(!typeof(PresetCompiler).Assembly.GetReferencedAssemblies().Any(x => x.Name is "LakeUI" or "System.Windows.Forms" or "System.Net.Http"),
+        "source-linked upstream compiler has no desktop framework or HTTP dependency");
     var hdr = Path.Combine(root, "HDR.mp4");
     await Tool(tools.Ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24", "-t", "1", "-c:v", "libx264", "-x264-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc", hdr);
     Check((await engine.ProbeAsync(hdr, default)).IsHdr, "HDR test fixture contains PQ transfer metadata");
@@ -78,6 +102,11 @@ try
     Check(!Directory.EnumerateFiles(root, ".localcompress-*").Any(), "temporary results are cleaned up");
     var argsList = CompressionEngine.BuildArguments(input, Path.Combine(root, "output.mp4"), CompressionQuality.Balanced);
     Check(argsList.Contains("file,pipe") && argsList.Contains("-map_metadata"), "local protocol restriction and metadata removal are configured");
+    Check(argsList.Contains("-n") && !argsList.Contains("-y"), "upstream overwrite behavior is replaced by the no-overwrite policy");
+    var filterPlan = CompressionEngine.BuildArguments(input, Path.Combine(root, "options.mp4"), CompressionQuality.Balanced,
+        new ProcessingOptions(1080, ReduceNoise: true, NormalizeAudio: true));
+    Check(filterPlan.Any(x => x.Contains("hqdn3d")) && filterPlan.Any(x => x.Contains("loudnorm")) && filterPlan.Any(x => x.Contains("1080")),
+        "optional filters are generated by the shared upstream preset engine");
     Console.WriteLine("All integration checks passed.");
 }
 

@@ -22,6 +22,10 @@ public sealed class MainForm : Form
     private readonly Button _start = MakeButton("开始压缩", true);
     private readonly Button _cancel = MakeButton("停止", false);
     private readonly Button _open = MakeButton("打开结果文件夹");
+    private readonly Button _more = MakeButton("更多处理 ▸");
+    private readonly ComboBox _resolution = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 210, AccessibleName = "输出分辨率", Name = "resolution" };
+    private readonly CheckBox _denoise = new() { Text = "轻度降噪", AutoSize = true, Margin = new Padding(0, 9, 18, 0), Name = "denoise" };
+    private readonly CheckBox _normalize = new() { Text = "统一音量", AutoSize = true, Margin = new Padding(0, 9, 0, 0), Name = "normalize" };
     private readonly Label _output = MakeLabel("默认保存在各原视频旁，原文件始终保留。", 10);
     private readonly Label _status = MakeLabel("添加视频，然后选择压缩方案。", 10);
     private readonly ProgressBar _progress = new() { Dock = DockStyle.Fill, Maximum = 1000, Height = 8 };
@@ -41,9 +45,10 @@ public sealed class MainForm : Form
         ForeColor = Color.FromArgb(31, 42, 58);
         AllowDrop = true;
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(28), ColumnCount = 1, RowCount = 12 };
-        foreach (var height in new[] { 52, 34, 48, 48, 0, 48, 40, 36, 14, 42, 54, 56 })
-            layout.RowStyles.Add(height == 0 ? new RowStyle(SizeType.Percent, 100) : new RowStyle(SizeType.Absolute, height));
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(28), ColumnCount = 1, RowCount = 14 };
+        var heights = new[] { 52, 34, 48, 48, 0, 48, 40, 0, 40, 36, 14, 42, 54, 56 };
+        for (var index = 0; index < heights.Length; index++)
+            layout.RowStyles.Add(index == 4 ? new RowStyle(SizeType.Percent, 100) : new RowStyle(SizeType.Absolute, heights[index]));
         layout.Controls.Add(MakeLabel("把视频变小，把文件留在自己手里。", 20, true), 0, 0);
         layout.Controls.Add(MakeLabel("离线处理 · 无账号 · 无上传 · 保留原文件", 11), 0, 1);
         layout.Controls.Add(MakeLabel("1  添加视频   →   2  选择方案   →   3  开始压缩", 11, true), 0, 2);
@@ -57,15 +62,37 @@ public sealed class MainForm : Form
         _quality.SelectedIndex = 1;
         layout.Controls.Add(Flow(MakeLabel("压缩方案", 10, true), _quality,
             MakeLabel("画质与体积需要取舍，实际缩小比例因视频而异。", 9)), 0, 5);
-        layout.Controls.Add(Flow(_folder, _output), 0, 6);
-        layout.Controls.Add(MakeLabel("输出 MP4 · 保留首个音轨 · 不保留字幕、其他音轨和可选元数据 · 暂不支持 HDR", 9), 0, 7);
-        layout.Controls.Add(_progress, 0, 8);
-        layout.Controls.Add(_status, 0, 9);
-        layout.Controls.Add(Flow(_start, _cancel, _open), 0, 10);
+        _resolution.Items.AddRange(["保留原尺寸（默认）", "缩小到 1080p", "缩小到 720p"]);
+        _resolution.SelectedIndex = 0;
+        _more.Name = "moreProcessing";
+        var processing = Flow(MakeLabel("分辨率", 10, true), _resolution, _denoise, _normalize);
+        processing.WrapContents = true;
+        processing.SetFlowBreak(_normalize, true);
+        processing.Controls.Add(MakeLabel("只缩小不放大；降噪会减少细节，统一音量会调整音轨，默认都关闭。", 9));
+        processing.Name = "processingOptions";
+        processing.Visible = false;
+        layout.Controls.Add(Flow(_more, MakeLabel("可选，不改也能直接压缩", 9)), 0, 6);
+        layout.Controls.Add(processing, 0, 7);
+        _more.Click += (_, _) =>
+        {
+            processing.Visible = !processing.Visible;
+            layout.RowStyles[7].Height = processing.Visible ? 74 : 0;
+            _more.Text = processing.Visible ? "收起处理 ▾" : "更多处理 ▸";
+        };
+        var tips = new ToolTip();
+        tips.SetToolTip(_resolution, "保持宽高比，只缩小不放大。横屏限制高度，竖屏限制宽度。");
+        tips.SetToolTip(_denoise, "适合有噪点的画面，会减少部分细节；默认关闭。");
+        tips.SetToolTip(_normalize, "自动调整首个音轨的响度，可能改变原有音量；默认关闭。");
+        Disposed += (_, _) => tips.Dispose();
+        layout.Controls.Add(Flow(_folder, _output), 0, 8);
+        layout.Controls.Add(MakeLabel("输出 MP4 · 保留首个音轨 · 不保留字幕、其他音轨和可选元数据 · 暂不支持 HDR", 9), 0, 9);
+        layout.Controls.Add(_progress, 0, 10);
+        layout.Controls.Add(_status, 0, 11);
+        layout.Controls.Add(Flow(_start, _cancel, _open), 0, 12);
         var engineLabel = MakeLabel(_tools is null
             ? "缺少本地处理引擎：请将 ffmpeg.exe 和 ffprobe.exe 放入程序旁的 tools 文件夹。程序不会自动下载。"
-            : "本地处理引擎已就绪。程序不发起网络请求；双击任务可查看详情。", 9);
-        layout.Controls.Add(engineLabel, 0, 11);
+            : "本地处理引擎已就绪 · 使用 3FUI 预设引擎。程序不发起网络请求。", 9);
+        layout.Controls.Add(engineLabel, 0, 13);
         Controls.Add(layout);
         _cancel.Enabled = false;
         _open.Enabled = false;
@@ -149,6 +176,8 @@ public sealed class MainForm : Form
         _run = cancellation;
         SetRunning(true);
         var quality = (CompressionQuality)_quality.SelectedIndex;
+        var processingOptions = new ProcessingOptions(
+            _resolution.SelectedIndex switch { 1 => 1080, 2 => 720, _ => 0 }, _denoise.Checked, _normalize.Checked);
         var engine = new CompressionEngine(_tools);
         int completed = 0, unsuccessful = 0;
         try
@@ -170,7 +199,7 @@ public sealed class MainForm : Form
                 });
                 try
                 {
-                    var result = await engine.CompressAsync(item.Path, _outputDirectory ?? Path.GetDirectoryName(item.Path)!, quality, progress, cancellation.Token);
+                    var result = await engine.CompressAsync(item.Path, _outputDirectory ?? Path.GetDirectoryName(item.Path)!, quality, progress, cancellation.Token, processingOptions);
                     item.Completed = true;
                     item.Output = result.OutputPath;
                     _lastOutput = result.OutputPath;
@@ -211,6 +240,7 @@ public sealed class MainForm : Form
     private void SetRunning(bool running)
     {
         _add.Enabled = _remove.Enabled = _folder.Enabled = _quality.Enabled = !running;
+        _more.Enabled = _resolution.Enabled = _denoise.Enabled = _normalize.Enabled = !running;
         _cancel.Enabled = running;
         _open.Enabled = !running && _lastOutput is not null;
         UpdateStart();

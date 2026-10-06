@@ -2,9 +2,9 @@ name: Local compression checks
 on:
   push:
     branches: [beginner-local]
-    paths: ['LocalCompress/**', '.github/workflows/local-compress.yml']
+    paths: ['LocalCompress/**', 'FFmpegFreeUI/功能/**', '.github/workflows/local-compress.yml']
   pull_request:
-    paths: ['LocalCompress/**', '.github/workflows/local-compress.yml']
+    paths: ['LocalCompress/**', 'FFmpegFreeUI/功能/**', '.github/workflows/local-compress.yml']
   workflow_dispatch:
 permissions:
   contents: read

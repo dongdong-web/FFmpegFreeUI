@@ -3,10 +3,13 @@ Imports System.IO
 Imports System.Text
 Imports System.Text.Json
 Imports System.Text.RegularExpressions
+#If Not LOCALCOMPRESS_HEADLESS Then
 Imports LakeUI
+#End If
 
 Partial Public Class 预设管理_v6
 
+#If Not LOCALCOMPRESS_HEADLESS Then
     Private Shared Sub 储存质量(a As 预设数据_v6, ui As Form_v6_参数面板)
         With ui.私有界面_质量
             a.视频参数_比特率_控制方式 = 质量控制方式SelectedIndexToEnum(Math.Max(0, .MCB_全局质量控制方式.SelectedIndex))
@@ -124,6 +127,8 @@ Partial Public Class 预设管理_v6
             SetTrackValue(.ETB_峰值电平, a.音频参数_响度标准化_峰值电平, -1)
         End With
     End Sub
+#End If
+
     Private Shared Function 生成质量参数(a As 预设数据_v6, 阶段 As 预设数据_v6.命令行阶段, Optional 输出流选择器 As String = "") As List(Of String)
         Dim parts As New List(Of String)
         Dim 控制方式 = 标准化视频全局质量控制方式(a.视频参数_比特率_控制方式)

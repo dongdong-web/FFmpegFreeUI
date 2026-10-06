@@ -3,6 +3,7 @@ Imports System.Text
 
 Public Class 启动参数响应_v6
 
+#If Not LOCALCOMPRESS_HEADLESS Then
     Private Shared 首次启动参数 As List(Of String)
 
     Private Class 接收参数状态
@@ -200,6 +201,8 @@ Public Class 启动参数响应_v6
         result.Append(""""c)
         Return result.ToString()
     End Function
+
+#End If
 
     Public Shared Function 拆分命令行(commandLine As String) As List(Of String)
         Dim result As New List(Of String)

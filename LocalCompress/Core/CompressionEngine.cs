@@ -2,10 +2,12 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using LocalCompress.Upstream;
 
 namespace LocalCompress.Core;
 
 public enum CompressionQuality { Quality, Balanced, Small }
+public sealed record ProcessingOptions(int MaxShortEdge = 0, bool ReduceNoise = false, bool NormalizeAudio = false);
 public sealed record MediaInfo(double Duration, int Width, int Height, bool HasAudio, bool IsHdr);
 public sealed record CompressionProgress(double Fraction, string Speed);
 public sealed record CompressionResult(string OutputPath, long OriginalBytes, long OutputBytes);
@@ -93,19 +95,17 @@ public sealed class CompressionEngine(ToolPaths tools)
             transfer is "smpte2084" or "arib-std-b67");
     }
 
-    public static IReadOnlyList<string> BuildArguments(string input, string temporaryOutput, CompressionQuality quality)
+    public static IReadOnlyList<string> BuildArguments(string input, string temporaryOutput, CompressionQuality quality,
+        ProcessingOptions? options = null, bool hasAudio = true)
     {
-        var crf = quality switch { CompressionQuality.Quality => "20", CompressionQuality.Balanced => "25", CompressionQuality.Small => "30", _ => throw new ArgumentOutOfRangeException(nameof(quality)) };
-        return ["-hide_banner", "-nostdin", "-n", "-protocol_whitelist", "file,pipe", "-i", input,
-            "-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "-1", "-map_metadata:s", "-1", "-map_chapters", "-1",
-            "-c:v", "libx264", "-preset", "medium", "-crf", crf,
-            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
-            "-progress", "pipe:1", "-nostats", temporaryOutput];
+        options ??= new();
+        return PresetCompiler.BuildArguments(input, temporaryOutput, (int)quality,
+            options.MaxShortEdge, options.ReduceNoise, options.NormalizeAudio, hasAudio);
     }
 
     public async Task<CompressionResult> CompressAsync(string input, string outputDirectory,
-        CompressionQuality quality, IProgress<CompressionProgress>? progress, CancellationToken cancellationToken)
+        CompressionQuality quality, IProgress<CompressionProgress>? progress, CancellationToken cancellationToken,
+        ProcessingOptions? options = null)
     {
         input = LocalFile(input);
         var info = await ProbeAsync(input, cancellationToken);
@@ -120,7 +120,7 @@ public sealed class CompressionEngine(ToolPaths tools)
             double fraction = 0;
             string speed = "";
             var lastReport = Stopwatch.StartNew();
-            var result = await RunAsync(tools.Ffmpeg, BuildArguments(input, temp, quality), line =>
+            var result = await RunAsync(tools.Ffmpeg, BuildArguments(input, temp, quality, options, info.HasAudio), line =>
             {
                 var split = line.IndexOf('=');
                 if (split < 0) return;

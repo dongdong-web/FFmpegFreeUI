@@ -3,10 +3,13 @@ Imports System.IO
 Imports System.Text
 Imports System.Text.Json
 Imports System.Text.RegularExpressions
+#If Not LOCALCOMPRESS_HEADLESS Then
 Imports LakeUI
+#End If
 
 Partial Public Class 预设管理_v6
 
+#If Not LOCALCOMPRESS_HEADLESS Then
     Private Shared Sub 储存剪辑(a As 预设数据_v6, ui As Form_v6_参数面板)
         With ui.私有界面_剪辑区间
             a.剪辑区间_方法 = SelectedIndexToEnum(Of 预设数据_v6.剪辑方法)(Math.Max(0, .MCB_剪辑模式.SelectedIndex))
@@ -207,6 +210,8 @@ Partial Public Class 预设管理_v6
             Case Else : Return 0
         End Select
     End Function
+#End If
+
     Private Shared Function 生成元数据章节附件片段(a As 预设数据_v6, 当前视频输出数量 As Integer, 输入文件 As String, 输出文件 As String, 当前字幕输出数量 As Integer) As 附加输出片段
         Dim result As New 附加输出片段
         Select Case a.流控制_元数据选项

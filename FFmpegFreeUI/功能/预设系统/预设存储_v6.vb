@@ -3,6 +3,7 @@ Imports System.Text.Json
 
 Partial Public Class 预设管理_v6
 
+#If Not LOCALCOMPRESS_HEADLESS Then
     Private Shared ReadOnly 预设复制选项 As New JsonSerializerOptions(JsonSO) With {.WriteIndented = False}
 
     Public Shared Function 克隆预设数据(source As 预设数据_v6) As 预设数据_v6
@@ -92,6 +93,8 @@ Partial Public Class 预设管理_v6
         End If
         原子文件写入_v6.写入文本(文件路径, JsonSerializer.Serialize(snapshot, JsonSO))
     End Sub
+
+#End If
 
     Public Shared Sub 初始化空集合(a As 预设数据_v6)
         If a Is Nothing Then Exit Sub

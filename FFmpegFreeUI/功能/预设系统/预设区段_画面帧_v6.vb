@@ -3,10 +3,13 @@ Imports System.IO
 Imports System.Text
 Imports System.Text.Json
 Imports System.Text.RegularExpressions
+#If Not LOCALCOMPRESS_HEADLESS Then
 Imports LakeUI
+#End If
 
 Partial Public Class 预设管理_v6
 
+#If Not LOCALCOMPRESS_HEADLESS Then
     Private Shared Sub 储存画面帧(a As 预设数据_v6, ui As Form_v6_参数面板)
         With ui.私有界面_画面帧
             a.视频参数_分辨率 = .MCB_直接指定分辨率.Text
@@ -314,6 +317,8 @@ Partial Public Class 预设管理_v6
         烧字幕.MTB_补充样式.Text = a.视频参数_烧录字幕_补充样式
         烧字幕.MTB_自己写整个滤镜.Text = a.视频参数_烧录字幕_自己写滤镜取代所有设置
     End Sub
+#End If
+
     Private Shared Function 构造缩放滤镜(a As 预设数据_v6) As String
         Dim 缩放滤镜 = If(a.视频参数_分辨率自动计算_缩放滤镜, "").Trim().ToLowerInvariant()
         Dim 使用CUDA = String.Equals(缩放滤镜, "scale_cuda", StringComparison.Ordinal)

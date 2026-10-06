@@ -3,7 +3,9 @@ Imports System.IO
 Imports System.Text
 Imports System.Text.Json
 Imports System.Text.RegularExpressions
+#If Not LOCALCOMPRESS_HEADLESS Then
 Imports LakeUI
+#End If
 
 Partial Public Class 预设管理_v6
 

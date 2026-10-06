@@ -1,10 +1,11 @@
 param(
     [Parameter(Mandatory = $true)][string]$FFmpegDirectory,
-    [string]$DotnetPath = 'dotnet'
+    [string]$DotnetPath = 'dotnet',
+    [string]$OutputDirectory = ''
 )
 $ErrorActionPreference = 'Stop'
 $repoDirectory = Split-Path $PSScriptRoot -Parent
-$buildDirectory = Join-Path $repoDirectory 'artifacts/LocalCompress-win-x64'
+$buildDirectory = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $repoDirectory 'artifacts/LocalCompress-win-x64' }
 $engineDirectory = (Resolve-Path -LiteralPath $FFmpegDirectory).Path
 foreach ($file in @('bin/ffmpeg.exe', 'bin/ffprobe.exe', 'LICENSE', 'README.txt')) {
     if (-not (Test-Path -LiteralPath (Join-Path $engineDirectory $file))) { throw "Missing engine distribution file: $file" }

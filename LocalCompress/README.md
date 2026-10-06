@@ -1,7 +1,8 @@
 # 轻压：本地视频压缩
 
-这是 FFmpegFreeUI fork 中的独立小白入口，当前版本 0.1.0，面向 Windows 10/11 x64。
-上游专业版源码保留；简易入口使用标准 WinForms 和本地 FFmpeg，不加载上游的 LakeUI、Agent、社区、更新器、插件或远程调用。
+这是 FFmpegFreeUI fork 中的小白入口，当前版本 0.2.0，面向 Windows 10/11 x64。
+简易界面使用标准 WinForms，真实复用上游的预设模型、编码器数据库、质量控制、滤镜组合与阶段化命令生成源码。
+这些源码单独编译为无界面的处理库，不加载上游的 LakeUI、Agent、社区、更新器、插件或远程调用。
 
 ## 使用
 
@@ -13,6 +14,14 @@
 
 原文件不覆盖，已有结果不覆盖。成功后显示输出大小和减少比例。
 结果没有变小时自动丢弃；失败或停止时清理本次临时输出。双击任务查看具体原因。
+
+“更多处理”默认收起，均为可选项：
+
+- 分辨率：保留原尺寸（默认）、缩小到 1080p 或 720p。保持宽高比，只缩小不放大；横屏限制高度、竖屏限制宽度。
+- 轻度降噪：使用上游 hqdn3d 滤镜组合，适合有噪点的素材，会减少部分细节，默认关闭。
+- 统一音量：使用上游 loudnorm 音频滤镜，单次处理调整首个音轨的响度，无音轨时自动跳过，默认关闭。
+
+关闭“更多处理”面板只收起界面，不清除已选选项；任务执行时使用提交时的选项快照。
 
 ## 隐私范围
 
@@ -27,7 +36,7 @@
 
 ## 首版能力边界
 
-输出 H.264/AAC MP4，保持尺寸（奇数边长最多缩小 1 像素），保留第一个视频流和第一个音轨。
+输出 H.264/AAC MP4，默认保持尺寸（奇数边长最多缩小 1 像素），保留第一个视频流和第一个音轨。
 字幕、额外音轨、章节和附件不保留。HDR 暂不处理，明确报错并保留原文件。
 恒定质量压缩不承诺固定百分比、目标大小或视觉无损。采用 CPU 编码，批量任务串行执行。
 正常退出和取消会清理临时结果；断电或强制结束进程可能留下 `.localcompress-*.mp4`，不会覆盖原文件。
@@ -41,8 +50,14 @@ dotnet build LocalCompress/App/LocalCompress.App.csproj -c Release
 dotnet run --project LocalCompress/Tests/LocalCompress.Tests.csproj -c Release
 ```
 
-集成测试需要可信的 `ffmpeg.exe` 和 `ffprobe.exe` 在 PATH，包含 libx264 和 AAC。
-测试使用合成视频，覆盖原文件完整性、名称冲突、中文路径、无音轨、HDR、失败、取消和远程播放列表拒绝。
+集成测试需要可信的 `ffmpeg.exe` 和 `ffprobe.exe` 在 PATH，包含 libx264、AAC、scale、hqdn3d 和 loudnorm。
+测试使用合成视频，覆盖原文件完整性、名称冲突、中文路径、无音轨、HDR、失败、取消、远程播放列表拒绝、横竖屏缩放、降噪与音量组合。
+
+```powershell
+dotnet run --project LocalCompress/UiSmoke/LocalCompress.UiSmoke.csproj -c Release -- artifacts/ui-preview.png
+```
+
+原生窗口检查默认选项、折叠/展开行为并生成界面预览。该检查不能替代人工端到端体验。
 
 打包（只在开发时准备引擎，用户运行时不下载）：
 
@@ -58,5 +73,10 @@ dotnet run --project LocalCompress/Tests/LocalCompress.Tests.csproj -c Release
 
 主程序：`App/MainForm.cs`；本地处理与验证：`Core/CompressionEngine.cs`；测试：`Tests/Program.cs`。
 上游基线：`65aec1ff4dcd62a54c4361fe1719520378750c36`。
-本入口暂未复用上游 VB 任务引擎，避免把专业 UI 和联网初始化带入简易版。
+`Upstream/LocalCompress.Upstream.vbproj` 通过源码链接编译仓库中的原始 VB 预设模块，避免复制后形成两套实现。
+`LOCALCOMPRESS_HEADLESS` 条件编译只排除 UI、磁盘设置读取与专业版启动逻辑；编码参数、滤镜图、排序、流映射仍由上游源码生成。
+七个纯辅助函数从原有 UI 文件移到 `预设通用函数_v6.vb`，由专业版和简易版共享，函数体保持原样。
+`Upstream/PresetCompiler.vb` 将简易选项转换为上游预设，在执行前强制本地协议、禁止覆盖以及清除流元数据。
+不接受任意预设 JSON、自定义命令、额外输入或脚本引擎，防止专业扩展能力越过本地压缩边界。
+本轮复用的是预设处理层，任务执行、批量队列、取消、输出验证仍使用简易版实现；硬件加速、两遍编码、字幕烧录、HDR 转换等没有在界面开放。
 上游 MIT 声明保留；FFmpeg 与 .NET 运行时使用各自许可。本入口不依赖 LakeUI。

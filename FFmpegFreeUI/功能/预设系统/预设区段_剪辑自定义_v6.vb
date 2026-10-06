@@ -3,7 +3,9 @@ Imports System.IO
 Imports System.Text
 Imports System.Text.Json
 Imports System.Text.RegularExpressions
+#If Not LOCALCOMPRESS_HEADLESS Then
 Imports LakeUI
+#End If
 
 Partial Public Class 预设管理_v6
 
@@ -134,11 +136,15 @@ Partial Public Class 预设管理_v6
 
     Private Shared Function 应用转译模式路径(value As String) As String
         Dim raw = If(value, "")
+#If LOCALCOMPRESS_HEADLESS Then
+        Return raw
+#Else
         If raw = "" OrElse Not 设置_v6.实例对象.转译模式 Then Return raw
         If raw.StartsWith("<"c) AndAlso raw.EndsWith(">"c) Then Return raw
         If String.Equals(raw, "NUL", StringComparison.OrdinalIgnoreCase) Then Return raw
         If raw.StartsWith("/"c) AndAlso Not raw.StartsWith("//", StringComparison.Ordinal) Then Return raw
         Return 转译模式处理路径(raw)
+#End If
     End Function
 
     Private Shared Function 获取路径目录保持分隔符(value As String) As String

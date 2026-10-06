@@ -36,9 +36,13 @@ Public Class 视频编码器数据库_v6
         If 分类 Is Nothing Then Return New List(Of 视频编码器数据)
 
         If 分类名称 = "自定义" Then
+#If LOCALCOMPRESS_HEADLESS Then
+            Return New List(Of 视频编码器数据)
+#Else
             Return 设置_v6.实例对象.自定义视频编码器列表.
                 Select(Function(x) 创建自定义编码器数据(x)).
                 ToList()
+#End If
         End If
 
         Dim 结果 As New List(Of 视频编码器数据)

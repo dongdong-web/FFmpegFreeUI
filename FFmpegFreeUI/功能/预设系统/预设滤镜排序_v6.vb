@@ -2,7 +2,9 @@ Imports System.Globalization
 Imports System.IO
 Imports System.Text
 Imports System.Text.Json
+#If Not LOCALCOMPRESS_HEADLESS Then
 Imports LakeUI
+#End If
 
 Partial Public Class 预设管理_v6
 

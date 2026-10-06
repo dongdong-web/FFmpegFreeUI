@@ -41,14 +41,7 @@ Partial Public Class 预设管理_v6
         Return Color.Empty
     End Function
 
-    Private Shared Function 已设置(ParamArray 值() As String) As Boolean
-        Return 值 IsNot Nothing AndAlso 值.Any(Function(x) Not String.IsNullOrWhiteSpace(x))
-    End Function
 
-    Private Shared Function 抽帧参数已设置(a As 预设数据_v6) As Boolean
-        If a Is Nothing Then Return False
-        Return 已设置(a.视频参数_抽帧_max, a.视频参数_抽帧_keep, a.视频参数_抽帧_hi, a.视频参数_抽帧_lo, a.视频参数_抽帧_frac)
-    End Function
 
     Private Shared Function 格式化枚举名称(value As [Enum]) As String
         If value Is Nothing Then Return ""
@@ -86,10 +79,6 @@ Partial Public Class 预设管理_v6
         Return 文本
     End Function
 
-    Private Shared Function 超分单片有设置(单片 As 预设数据_v6.超分数据单片结构) As Boolean
-        If 单片 Is Nothing Then Return False
-        Return 已设置(单片.目标宽度, 单片.目标高度, 单片.上采样算法, 单片.下采样算法, 单片.抗振铃强度, 单片.着色器文件路径)
-    End Function
 
     Private Shared Function 格式化超分单片(单片 As 预设数据_v6.超分数据单片结构) As String
         If 单片 Is Nothing Then Return ""
@@ -109,10 +98,6 @@ Partial Public Class 预设管理_v6
         列表.Add($"{名称}：&H{颜色.A:X2}{颜色.B:X2}{颜色.G:X2}{颜色.R:X2}")
     End Sub
 
-    Private Shared Function 字幕颜色已设置(颜色 As 预设数据_v6.烧字幕专用颜色类型) As Boolean
-        If 颜色 Is Nothing Then Return False
-        Return 颜色.已设置 OrElse 颜色.A <> 255 OrElse 颜色.R <> 0 OrElse 颜色.G <> 0 OrElse 颜色.B <> 0
-    End Function
 
     Private Shared Sub 写入字幕颜色(目标 As 预设数据_v6.烧字幕专用颜色类型, 已设置 As Boolean, 颜色 As Color)
         If 目标 Is Nothing Then Exit Sub
@@ -139,9 +124,6 @@ Partial Public Class 预设管理_v6
         设置动作.Invoke(Color.FromArgb(限制颜色通道(来源.A), 限制颜色通道(来源.R), 限制颜色通道(来源.G), 限制颜色通道(来源.B)), True)
     End Sub
 
-    Private Shared Function 限制颜色通道(value As Integer) As Integer
-        Return Math.Min(255, Math.Max(0, value))
-    End Function
 
     Private Shared Function 格式化字符串数组(值 As String()) As String
         If 值 Is Nothing Then Return ""

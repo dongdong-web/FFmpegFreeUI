@@ -3,10 +3,13 @@ Imports System.IO
 Imports System.Text
 Imports System.Text.Json
 Imports System.Text.RegularExpressions
+#If Not LOCALCOMPRESS_HEADLESS Then
 Imports LakeUI
+#End If
 
 Partial Public Class 预设管理_v6
 
+#If Not LOCALCOMPRESS_HEADLESS Then
     Private Shared Function 从面板创建预设但不读排序(ui As Form_v6_参数面板) As 预设数据_v6
         Dim a As New 预设数据_v6
         If ui Is Nothing Then Return a
@@ -33,25 +36,7 @@ Partial Public Class 预设管理_v6
         End If
     End Sub
 
-    Private Shared Function 获取目标流类型(标识符 As 预设数据_v6.滤镜排序单片结构.标识符枚举) As 预设数据_v6.滤镜排序单片结构.流类型
-        Select Case 标识符
-            Case 预设数据_v6.滤镜排序单片结构.标识符枚举.音频响度标准化,
-                 预设数据_v6.滤镜排序单片结构.标识符枚举.音频格式转换,
-                 预设数据_v6.滤镜排序单片结构.标识符枚举.音频重采样,
-                 预设数据_v6.滤镜排序单片结构.标识符枚举.自定义音频滤镜
-                Return 预设数据_v6.滤镜排序单片结构.流类型.音频
-            Case Else
-                Return 预设数据_v6.滤镜排序单片结构.流类型.视频
-        End Select
-    End Function
 
-    Public Shared Function 获取滤镜显示名称(标识符 As 预设数据_v6.滤镜排序单片结构.标识符枚举) As String
-        If 标识符 = 预设数据_v6.滤镜排序单片结构.标识符枚举.未设置 Then Return "未设置"
-        Select Case 标识符
-            Case 预设数据_v6.滤镜排序单片结构.标识符枚举.NV_FRUC : Return "NVIDIA Vulkan FRUC"
-        End Select
-        Return 标识符.ToString()
-    End Function
     Private Shared Function SplitTextList(value As String) As String()
         If String.IsNullOrWhiteSpace(value) Then Return Array.Empty(Of String)()
         Return value.Split(separator, StringSplitOptions.RemoveEmptyEntries).Select(Function(x) x.Trim()).Where(Function(x) x <> "").ToArray()
@@ -246,6 +231,8 @@ Partial Public Class 预设管理_v6
         combo.Text = text
         Return False
     End Function
+
+#End If
 
     Private Shared Function 生成解码参数(a As 预设数据_v6) As String
         Dim parts As New List(Of String)
