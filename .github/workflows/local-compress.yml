@@ -1,0 +1,24 @@
+name: Local compression checks
+on:
+  push:
+    branches: [beginner-local]
+    paths: ['LocalCompress/**', '.github/workflows/local-compress.yml']
+  pull_request:
+    paths: ['LocalCompress/**', '.github/workflows/local-compress.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build the local-only application
+        run: dotnet build LocalCompress/App/LocalCompress.App.csproj -c Release
+      - name: Prepare test-only video tools
+        run: choco install ffmpeg --yes --no-progress
+      - name: Test real compression and privacy boundaries
+        run: dotnet run --project LocalCompress/Tests/LocalCompress.Tests.csproj -c Release
