@@ -14,33 +14,32 @@ var thread = new Thread(() =>
         using var bitmap = new Bitmap(form.Width, form.Height);
         form.DrawToBitmap(bitmap, new Rectangle(0, 0, form.Width, form.Height));
         bitmap.Save(destination, System.Drawing.Imaging.ImageFormat.Png);
-        var processing = form.Controls.Find("processingOptions", true).Single();
-        if (processing.Visible) throw new Exception("Optional processing must start collapsed.");
-        ((Button)form.Controls.Find("moreProcessing", true).Single()).PerformClick();
+        foreach (var name in new[] { "quality", "moreProcessing", "resolution", "denoise", "normalize" })
+            if (form.Controls.Find(name, true).Length != 0) throw new Exception("Advanced control still exposed: " + name);
+        var scene = (ComboBox)form.Controls.Find("scene", true).Single();
+        if (scene.Items.Count != 2 || scene.SelectedIndex != 0) throw new Exception("Expected two scenes with daily as default.");
+        scene.SelectedIndex = 1;
         Application.DoEvents();
-        if (!processing.Visible) throw new Exception("Optional processing did not expand.");
-        if (((ComboBox)form.Controls.Find("resolution", true).Single()).SelectedIndex != 0 ||
-            ((CheckBox)form.Controls.Find("denoise", true).Single()).Checked ||
-            ((CheckBox)form.Controls.Find("normalize", true).Single()).Checked)
-            throw new Exception("Default processing must retain the original size and leave optional filters off.");
-        using var expanded = new Bitmap(form.Width, form.Height);
-        form.DrawToBitmap(expanded, new Rectangle(0, 0, form.Width, form.Height));
-        expanded.Save(Path.Combine(Path.GetDirectoryName(destination)!, "ui-processing-preview.png"), System.Drawing.Imaging.ImageFormat.Png);
+        using var screen = new Bitmap(form.Width, form.Height);
+        form.DrawToBitmap(screen, new Rectangle(0, 0, form.Width, form.Height));
+        screen.Save(Path.Combine(Path.GetDirectoryName(destination)!, "ui-screen-preview.png"), System.Drawing.Imaging.ImageFormat.Png);
         var targetOptions = form.Controls.Find("targetOptions", true).Single();
-        if (targetOptions.Visible) throw new Exception("Target size must be hidden in the default quality mode.");
-        var quality = (ComboBox)form.Controls.Find("quality", true).Single();
-        quality.SelectedIndex = 3;
+        var limit = (CheckBox)form.Controls.Find("limitSize", true).Single();
+        var target = (NumericUpDown)form.Controls.Find("targetMegabytes", true).Single();
+        if (targetOptions.Visible || limit.Checked || target.Enabled) throw new Exception("Size limit must be off by default.");
+        limit.Checked = true;
         Application.DoEvents();
-        if (!targetOptions.Visible || ((NumericUpDown)form.Controls.Find("targetMegabytes", true).Single()).Value != 100)
-            throw new Exception("Target mode must expose a 100 MB default.");
+        if (!targetOptions.Visible || !target.Enabled || target.Value != 100) throw new Exception("Size limit input did not appear.");
         using var targetBitmap = new Bitmap(form.Width, form.Height);
         form.DrawToBitmap(targetBitmap, new Rectangle(0, 0, form.Width, form.Height));
         targetBitmap.Save(Path.Combine(Path.GetDirectoryName(destination)!, "ui-target-preview.png"), System.Drawing.Imaging.ImageFormat.Png);
-        quality.SelectedIndex = 1;
+        target.Value = 25;
+        limit.Checked = false;
+        scene.SelectedIndex = 0;
         Application.DoEvents();
-        if (targetOptions.Visible) throw new Exception("Returning to quality mode must hide target settings.");
-        Console.WriteLine("PASS Target-size mode exposes its input and returns to the default mode");
-        Console.WriteLine("PASS Optional controls are collapsed by default and expand correctly");
+        if (targetOptions.Visible || target.Enabled || target.Value != 25) throw new Exception("Disabling the limit must stop applying it and retain the entered value.");
+        Console.WriteLine("PASS Two scene choices replace advanced controls; daily is the default");
+        Console.WriteLine("PASS Size limit starts disabled and toggles independently of the scene");
         form.Close();
         Console.WriteLine("PASS Native WinForms startup and rendering: " + destination);
     }

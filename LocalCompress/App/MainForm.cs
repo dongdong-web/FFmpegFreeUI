@@ -15,7 +15,8 @@ public sealed class MainForm : Form
 
     private readonly ToolPaths? _tools = ToolPaths.Find(AppContext.BaseDirectory);
     private readonly ListView _files = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, HideSelection = false, BorderStyle = BorderStyle.None, ShowItemToolTips = true };
-    private readonly ComboBox _quality = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 175, AccessibleName = "压缩方案", Name = "quality" };
+    private readonly ComboBox _scene = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 210, AccessibleName = "视频场景", Name = "scene" };
+    private readonly CheckBox _limitSize = new() { Text = "接收方有大小限制", AutoSize = true, Margin = new Padding(0, 9, 14, 0), Name = "limitSize" };
     private readonly NumericUpDown _target = new() { Minimum = .1m, Maximum = 100000, DecimalPlaces = 1, Value = 100, Width = 105, AccessibleName = "每个视频的目标大小 MB", Name = "targetMegabytes" };
     private readonly Button _add = MakeButton("＋ 添加视频");
     private readonly Button _remove = MakeButton("移除选中");
@@ -23,12 +24,8 @@ public sealed class MainForm : Form
     private readonly Button _start = MakeButton("开始压缩", true);
     private readonly Button _cancel = MakeButton("停止", false);
     private readonly Button _open = MakeButton("打开结果文件夹");
-    private readonly Button _more = MakeButton("更多处理 ▸");
-    private readonly ComboBox _resolution = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 210, AccessibleName = "输出分辨率", Name = "resolution" };
-    private readonly CheckBox _denoise = new() { Text = "轻度降噪", AutoSize = true, Margin = new Padding(0, 9, 18, 0), Name = "denoise" };
-    private readonly CheckBox _normalize = new() { Text = "统一音量", AutoSize = true, Margin = new Padding(0, 9, 0, 0), Name = "normalize" };
     private readonly Label _output = MakeLabel("默认保存在各原视频旁，原文件始终保留。", 10);
-    private readonly Label _status = MakeLabel("添加视频，然后选择压缩方案。", 10);
+    private readonly Label _status = MakeLabel("添加视频，选择场景后即可开始。", 10);
     private readonly ProgressBar _progress = new() { Dock = DockStyle.Fill, Maximum = 1000, Height = 8 };
     private CancellationTokenSource? _run;
     private string? _outputDirectory;
@@ -46,62 +43,48 @@ public sealed class MainForm : Form
         ForeColor = Color.FromArgb(31, 42, 58);
         AllowDrop = true;
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(28), ColumnCount = 1, RowCount = 14 };
-        var heights = new[] { 52, 34, 48, 48, 0, 48, 40, 0, 40, 36, 14, 42, 54, 56 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(28), ColumnCount = 1, RowCount = 13 };
+        var heights = new[] { 52, 34, 48, 48, 0, 48, 40, 42, 40, 14, 42, 54, 56 };
         for (var index = 0; index < heights.Length; index++)
             layout.RowStyles.Add(index == 4 ? new RowStyle(SizeType.Percent, 100) : new RowStyle(SizeType.Absolute, heights[index]));
         layout.Controls.Add(MakeLabel("把视频变小，把文件留在自己手里。", 20, true), 0, 0);
         layout.Controls.Add(MakeLabel("离线处理 · 无账号 · 无上传 · 保留原文件", 11), 0, 1);
-        layout.Controls.Add(MakeLabel("1  添加视频   →   2  选择方案   →   3  开始压缩", 11, true), 0, 2);
+        layout.Controls.Add(MakeLabel("1  添加视频   →   2  选择场景   →   3  开始压缩", 11, true), 0, 2);
         var fileActions = Flow(_add, _remove, MakeLabel("也可以把视频拖到这里", 10));
         layout.Controls.Add(fileActions, 0, 3);
         _files.Columns.Add("视频", 340);
         _files.Columns.Add("原始大小", 110);
         _files.Columns.Add("状态", 330);
         layout.Controls.Add(_files, 0, 4);
-        _quality.Items.AddRange(["画质优先", "均衡（推荐）", "体积优先", "指定目标大小"]);
-        _quality.SelectedIndex = 1;
-        var qualityHelp = MakeLabel("画质与体积需要取舍，实际缩小比例因视频而异。", 9);
-        layout.Controls.Add(Flow(MakeLabel("压缩方案", 10, true), _quality,
-            qualityHelp), 0, 5);
-        var targetOptions = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Visible = false, Name = "targetOptions" };
-        targetOptions.Controls.AddRange([MakeLabel("每个视频不超过", 9), _target, MakeLabel("MB（1 MB = 100 万字节）", 9)]);
-        _quality.SelectedIndexChanged += (_, _) =>
+        _scene.Items.AddRange(["日常视频（默认）", "录屏／课程"]);
+        _scene.SelectedIndex = 0;
+        var sceneHelp = MakeLabel("适合手机实拍、人物和生活记录，优先保持清晰。", 9);
+        _scene.SelectedIndexChanged += (_, _) => sceneHelp.Text = _scene.SelectedIndex == 0
+            ? "适合手机实拍、人物和生活记录，优先保持清晰。"
+            : "更保守地压缩，优先保留小字、图表和操作细节。";
+        layout.Controls.Add(Flow(MakeLabel("视频场景", 10, true), _scene, sceneHelp), 0, 5);
+        var targetOptions = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Visible = false, Name = "targetOptions", Margin = Padding.Empty };
+        targetOptions.Controls.AddRange([MakeLabel("每个视频不超过", 9), _target, MakeLabel("MB", 9)]);
+        _target.Enabled = false;
+        var sizeHelp = MakeLabel("默认保持原尺寸、流畅度和音量；尽量缩小，不强行压糊。", 9);
+        _limitSize.CheckedChanged += (_, _) =>
         {
-            targetOptions.Visible = _quality.SelectedIndex == 3;
-            qualityHelp.Text = _quality.SelectedIndex == 3 ? "自动分析再编码，耗时更长；目标越小，画质越低。" : "画质与体积需要取舍，实际缩小比例因视频而异。";
+            targetOptions.Visible = _limitSize.Checked;
+            _target.Enabled = _limitSize.Checked && _run is null;
+            sizeHelp.Text = _limitSize.Checked
+                ? "按上限分析再编码，耗时更长。目标越小画质越低；1 MB = 100 万字节。"
+                : "默认保持原尺寸、流畅度和音量；尽量缩小，不强行压糊。";
         };
-        _resolution.Items.AddRange(["保留原尺寸（默认）", "缩小到 1080p", "缩小到 720p"]);
-        _resolution.SelectedIndex = 0;
-        _more.Name = "moreProcessing";
-        var processing = Flow(MakeLabel("分辨率", 10, true), _resolution, _denoise, _normalize);
-        processing.WrapContents = true;
-        processing.SetFlowBreak(_normalize, true);
-        processing.Controls.Add(MakeLabel("只缩小不放大；降噪会减少细节，统一音量会调整音轨，默认都关闭。", 9));
-        processing.Name = "processingOptions";
-        processing.Visible = false;
-        layout.Controls.Add(Flow(_more, targetOptions), 0, 6);
-        layout.Controls.Add(processing, 0, 7);
-        _more.Click += (_, _) =>
-        {
-            processing.Visible = !processing.Visible;
-            layout.RowStyles[7].Height = processing.Visible ? 74 : 0;
-            _more.Text = processing.Visible ? "收起处理 ▾" : "更多处理 ▸";
-        };
-        var tips = new ToolTip();
-        tips.SetToolTip(_resolution, "保持宽高比，只缩小不放大。横屏限制高度，竖屏限制宽度。");
-        tips.SetToolTip(_denoise, "适合有噪点的画面，会减少部分细节；默认关闭。");
-        tips.SetToolTip(_normalize, "自动调整首个音轨的响度，可能改变原有音量；默认关闭。");
-        Disposed += (_, _) => tips.Dispose();
+        layout.Controls.Add(Flow(_limitSize, targetOptions), 0, 6);
+        layout.Controls.Add(sizeHelp, 0, 7);
         layout.Controls.Add(Flow(_folder, _output), 0, 8);
-        layout.Controls.Add(MakeLabel("输出 MP4 · 保留首个音轨 · 不保留字幕、其他音轨和可选元数据 · 暂不支持 HDR", 9), 0, 9);
-        layout.Controls.Add(_progress, 0, 10);
-        layout.Controls.Add(_status, 0, 11);
-        layout.Controls.Add(Flow(_start, _cancel, _open), 0, 12);
+        layout.Controls.Add(_progress, 0, 9);
+        layout.Controls.Add(_status, 0, 10);
+        layout.Controls.Add(Flow(_start, _cancel, _open), 0, 11);
         var engineLabel = MakeLabel(_tools is null
-            ? "缺少本地处理引擎：请将 ffmpeg.exe 和 ffprobe.exe 放入程序旁的 tools 文件夹。程序不会自动下载。"
-            : "本地处理引擎已就绪 · 使用 3FUI 预设引擎。程序不发起网络请求。", 9);
-        layout.Controls.Add(engineLabel, 0, 13);
+            ? "请使用完整体验包，包内自带本地处理引擎。"
+            : "本地处理 · 输出 MP4 · 保留首个音轨 · 原文件不覆盖\n暂不支持 HDR、字幕和多音轨保留；重要视频请保留原件。", 9);
+        layout.Controls.Add(engineLabel, 0, 12);
         Controls.Add(layout);
         _cancel.Enabled = false;
         _open.Enabled = false;
@@ -184,10 +167,8 @@ public sealed class MainForm : Form
         using var cancellation = new CancellationTokenSource();
         _run = cancellation;
         SetRunning(true);
-        var quality = _quality.SelectedIndex == 3 ? CompressionQuality.Balanced : (CompressionQuality)_quality.SelectedIndex;
-        var processingOptions = new ProcessingOptions(
-            _resolution.SelectedIndex switch { 1 => 1080, 2 => 720, _ => 0 }, _denoise.Checked, _normalize.Checked,
-            _quality.SelectedIndex == 3 ? (double)_target.Value : null);
+        var scene = (VideoScene)_scene.SelectedIndex;
+        double? targetMegabytes = _limitSize.Checked ? (double)_target.Value : null;
         var engine = new CompressionEngine(_tools);
         int completed = 0, unsuccessful = 0;
         try
@@ -209,13 +190,13 @@ public sealed class MainForm : Form
                 });
                 try
                 {
-                    var result = await engine.CompressAsync(item.Path, _outputDirectory ?? Path.GetDirectoryName(item.Path)!, quality, progress, cancellation.Token, processingOptions);
+                    var result = await engine.CompressSceneAsync(item.Path, _outputDirectory ?? Path.GetDirectoryName(item.Path)!, scene, targetMegabytes, progress, cancellation.Token);
                     item.Completed = true;
                     item.Output = result.OutputPath;
                     _lastOutput = result.OutputPath;
                     var reduction = 1 - (double)result.OutputBytes / result.OriginalBytes;
-                    row.SubItems[2].Text = result.AlreadyWithinTarget ? "已符合目标 · 无需压缩" : $"完成 · {FormatBytes(result.OutputBytes)} · 减少 {reduction:P0}";
-                    item.Detail = result.AlreadyWithinTarget ? "原视频已经在目标大小以内，未生成重复文件。\n" + result.OutputPath : $"已保存：{result.OutputPath}\n原始大小：{FormatBytes(result.OriginalBytes)}\n压缩后：{FormatBytes(result.OutputBytes)}\n原文件保留。";
+                    row.SubItems[2].Text = result.NotSmaller ? "无需压缩 · 保留原文件" : result.AlreadyWithinTarget ? "已符合目标 · 无需压缩" : $"完成 · {FormatBytes(result.OutputBytes)} · 减少 {reduction:P0}";
+                    item.Detail = result.NotSmaller ? "按保持清晰的方案处理后没有变小，已丢弃临时结果并保留原文件。\n" + result.OutputPath : result.AlreadyWithinTarget ? "原视频已经在目标大小以内，未生成重复文件。\n" + result.OutputPath : $"已保存：{result.OutputPath}\n原始大小：{FormatBytes(result.OriginalBytes)}\n压缩后：{FormatBytes(result.OutputBytes)}\n原文件保留。";
                     completed++;
                 }
                 catch (OperationCanceledException)
@@ -249,8 +230,9 @@ public sealed class MainForm : Form
 
     private void SetRunning(bool running)
     {
-        _add.Enabled = _remove.Enabled = _folder.Enabled = _quality.Enabled = !running;
-        _more.Enabled = _resolution.Enabled = _denoise.Enabled = _normalize.Enabled = _target.Enabled = !running;
+        _add.Enabled = _remove.Enabled = _folder.Enabled = _scene.Enabled = !running;
+        _limitSize.Enabled = !running;
+        _target.Enabled = !running && _limitSize.Checked;
         _cancel.Enabled = running;
         _open.Enabled = !running && _lastOutput is not null;
         UpdateStart();

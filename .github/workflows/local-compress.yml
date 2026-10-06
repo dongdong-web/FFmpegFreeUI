@@ -22,3 +22,5 @@ jobs:
         run: choco install ffmpeg --yes --no-progress
       - name: Test real compression and privacy boundaries
         run: dotnet run --project LocalCompress/Tests/LocalCompress.Tests.csproj -c Release
+      - name: Check scene quality against fixed SDR fixtures
+        run: dotnet run --project LocalCompress/QualityChecks/LocalCompress.QualityChecks.csproj -c Release -- artifacts artifacts/quality-report.md

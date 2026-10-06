@@ -45,6 +45,19 @@ try
     Check(second.OutputPath != first.OutputPath && File.Exists(first.OutputPath), "existing outputs are preserved with unique names");
     var after = SHA256.HashData(await File.ReadAllBytesAsync(input));
     Check(before.SequenceEqual(after), "original content remains byte-for-byte unchanged");
+    var daily = await engine.CompressSceneAsync(input, root, VideoScene.Daily, null, null, default);
+    var dailyInfo = await engine.ProbeAsync(daily.OutputPath, default);
+    Check(daily.OutputBytes < daily.OriginalBytes && dailyInfo.Width == info.Width && dailyInfo.Height == info.Height,
+        "daily scene reduces the fixture while preserving dimensions");
+    var sourceAudioHash = await Tool(tools.Ffmpeg, "-v", "error", "-i", input, "-map", "0:a:0", "-c:a", "copy", "-f", "hash", "-hash", "sha256", "-");
+    var dailyAudioHash = await Tool(tools.Ffmpeg, "-v", "error", "-i", daily.OutputPath, "-map", "0:a:0", "-c:a", "copy", "-f", "hash", "-hash", "sha256", "-");
+    Check(sourceAudioHash == dailyAudioHash, "daily scene copies AAC audio packets without loudness adjustment or generational loss");
+    var dailyTags = await Tool(tools.Ffprobe, "-v", "error", "-show_entries", "format_tags:stream_tags", "-of", "json", daily.OutputPath);
+    Check(!dailyTags.Contains("private-title-test") && !dailyTags.Contains("private-audio-test"), "copied scene audio still strips optional stream metadata");
+    var sceneTarget = await engine.CompressSceneAsync(input, root, VideoScene.Screen, .15, null, default);
+    Check(sceneTarget.OutputBytes <= 150000 && (await engine.ProbeAsync(sceneTarget.OutputPath, default)).HasAudio,
+        "size limit applies independently to the screen scene");
+    await Reject(() => engine.CompressSceneAsync(input, root, (VideoScene)99, null, null, default), "unknown scene rejected");
     var targeted = await engine.CompressAsync(input, root, CompressionQuality.Balanced, null, default,
         new ProcessingOptions(ReduceNoise: true, NormalizeAudio: true, TargetMegabytes: .15));
     var targetedInfo = await engine.ProbeAsync(targeted.OutputPath, default);
@@ -63,6 +76,20 @@ try
     await Tool(tools.Ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24", "-t", "2", "-c:v", "libx264", "-crf", "0", noAudio);
     var silent = await engine.CompressAsync(noAudio, root, CompressionQuality.Quality, null, default);
     Check(!(await engine.ProbeAsync(silent.OutputPath, default)).HasAudio, "videos without audio succeed");
+    var silentScene = await engine.CompressSceneAsync(noAudio, root, VideoScene.Daily, null, null, default);
+    Check(!(await engine.ProbeAsync(silentScene.OutputPath, default)).HasAudio, "daily scene preserves videos without audio");
+    var otherAudio = Path.Combine(root, "PCM audio.mkv");
+    await Tool(tools.Ffmpeg, "-v", "error", "-i", input, "-c:v", "copy", "-c:a", "pcm_s16le", otherAudio);
+    var convertedAudio = await engine.CompressSceneAsync(otherAudio, root, VideoScene.Daily, null, null, default);
+    Check((await engine.ProbeAsync(convertedAudio.OutputPath, default)).AudioCodec == "aac", "incompatible source audio falls back to AAC for MP4 playback");
+    var vfrInput = Path.Combine(root, "variable frame rate.mp4");
+    await Tool(tools.Ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30", "-t", "3", "-vf", "select='not(mod(n,2))+not(mod(n,3))'", "-fps_mode", "vfr", "-c:v", "libx264", "-crf", "0", vfrInput);
+    var vfrOutput = await engine.CompressSceneAsync(vfrInput, root, VideoScene.Screen, null, null, default);
+    var frameQuery = new[] { "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=best_effort_timestamp_time", "-of", "csv=p=0" };
+    var sourceTimes = await Tool(tools.Ffprobe, frameQuery.Concat([vfrInput]).ToArray());
+    var outputTimes = await Tool(tools.Ffprobe, frameQuery.Concat([vfrOutput.OutputPath]).ToArray());
+    var timestamps = (string value) => value.Split('\n').Select(x => x.Trim().TrimEnd(',')).Where(x => double.TryParse(x, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _)).ToArray();
+    Check(timestamps(sourceTimes).SequenceEqual(timestamps(outputTimes)), "screen scene preserves variable frame timing without dropping or duplicating frames");
     var silentTarget = await engine.CompressAsync(noAudio, root, CompressionQuality.Balanced, null, default, new ProcessingOptions(TargetMegabytes: .1));
     Check(silentTarget.OutputBytes <= 100000 && !(await engine.ProbeAsync(silentTarget.OutputPath, default)).HasAudio,
         "two-pass target-size compression works without an audio track");
@@ -100,6 +127,9 @@ try
     await Tool(tools.Ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24", "-t", "2", "-c:v", "libx264", "-crf", "51", compact);
     await Reject(() => engine.CompressAsync(compact, root, CompressionQuality.Quality, null, default), "larger recompression is discarded");
     Check(!File.Exists(Path.Combine(root, "已高度压缩_压缩.mp4")), "non-shrinking job leaves no misleading output");
+    var unchanged = await engine.CompressSceneAsync(compact, root, VideoScene.Daily, null, null, default);
+    Check(unchanged.NotSmaller && unchanged.OutputPath == compact && !File.Exists(Path.Combine(root, "已高度压缩_压缩.mp4")),
+        "scene mode reports no compression needed instead of saving a larger file");
     using var cancellation = new CancellationTokenSource();
     cancellation.Cancel();
     await Reject(() => engine.CompressAsync(input, root, CompressionQuality.Balanced, null, cancellation.Token), "cancelled job does not create output");

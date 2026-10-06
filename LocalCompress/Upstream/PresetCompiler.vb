@@ -7,8 +7,10 @@ Public NotInheritable Class PresetCompiler
                                           Optional maxShortEdge As Integer = 0,
                                           Optional reduceNoise As Boolean = False,
                                           Optional normalizeAudio As Boolean = False,
-                                          Optional hasAudio As Boolean = True) As IReadOnlyList(Of String)
-        Return BuildPlan(input, output, quality, maxShortEdge, reduceNoise, normalizeAudio, hasAudio)(0)
+                                          Optional hasAudio As Boolean = True,
+                                          Optional scene As Integer = -1,
+                                          Optional copyAudio As Boolean = False) As IReadOnlyList(Of String)
+        Return BuildPlan(input, output, quality, maxShortEdge, reduceNoise, normalizeAudio, hasAudio, scene:=scene, copyAudio:=copyAudio)(0)
     End Function
 
     Public Shared Function BuildPlan(input As String, output As String, quality As Integer,
@@ -17,16 +19,22 @@ Public NotInheritable Class PresetCompiler
                                     Optional normalizeAudio As Boolean = False,
                                     Optional hasAudio As Boolean = True,
                                     Optional videoBitrate As Integer = 0,
-                                    Optional passLog As String = "") As IReadOnlyList(Of IReadOnlyList(Of String))
+                                    Optional passLog As String = "",
+                                    Optional scene As Integer = -1,
+                                    Optional copyAudio As Boolean = False) As IReadOnlyList(Of IReadOnlyList(Of String))
         If quality < 0 OrElse quality > 2 Then Throw New ArgumentOutOfRangeException(NameOf(quality))
         If Not {0, 720, 1080}.Contains(maxShortEdge) Then Throw New ArgumentOutOfRangeException(NameOf(maxShortEdge))
-        Dim crf = {"20", "25", "30"}(quality)
+        If scene < -1 OrElse scene > 1 Then Throw New ArgumentOutOfRangeException(NameOf(scene))
+        If scene >= 0 AndAlso (maxShortEdge <> 0 OrElse reduceNoise OrElse normalizeAudio) Then
+            Throw New ArgumentException("Scene profiles preserve size and do not apply noise or loudness filters.")
+        End If
+        Dim crf = If(scene = -1, {"20", "25", "30"}(quality), If(scene = 0, "20", "18"))
         Dim preset As New 预设数据_v6 With {
             .输出容器 = "mp4",
             .视频参数_编码器_类型 = 预设数据_v6.视频编码器类型.视频,
             .视频参数_编码器_分类名称 = "H.264/AVC",
             .视频参数_编码器_具体编码 = "libx264",
-            .视频参数_编码器_编码预设 = "medium",
+            .视频参数_编码器_编码预设 = If(scene >= 0, "slow", "medium"),
             .视频参数_比特率_控制方式 = 预设数据_v6.视频全局质量控制方式.CRF,
             .视频参数_质量控制_参数名 = "crf",
             .视频参数_质量控制_值 = crf,
@@ -35,8 +43,8 @@ Public NotInheritable Class PresetCompiler
             .视频参数_分辨率自动计算_高度 = "trunc(ih/2)*2",
             .流控制_将视频参数应用于指定流 = {"0:v:0"},
             .流控制_将音频参数应用于指定流 = If(hasAudio, {"0:a:0"}, Array.Empty(Of String)()),
-            .音频参数_编码器_代号 = If(hasAudio, "aac.native", "audio.disable"),
-            .音频参数_比特率 = If(hasAudio, "128k", ""),
+            .音频参数_编码器_代号 = If(hasAudio, If(copyAudio, "audio.copy", "aac.native"), "audio.disable"),
+            .音频参数_比特率 = If(hasAudio AndAlso Not copyAudio, If(scene >= 0 AndAlso videoBitrate = 0, "192k", "128k"), ""),
             .流控制_元数据选项 = 预设数据_v6.流控制元数据选项.清除元数据,
             .流控制_章节选项 = 预设数据_v6.流控制章节选项.清除章节
         }
@@ -87,6 +95,7 @@ Public NotInheritable Class PresetCompiler
                 arguments(logIndex + 1) = passLog
             End If
             arguments.InsertRange(0, {"-nostdin", "-protocol_whitelist", "file,pipe"})
+            If scene >= 0 Then arguments.InsertRange(arguments.Count - 1, {"-fps_mode", "passthrough"})
             If Not firstPass Then arguments.InsertRange(arguments.Count - 1, {"-map_metadata:s", "-1", "-movflags", "+faststart"})
             arguments.InsertRange(arguments.Count - 1, {"-progress", "pipe:1", "-nostats"})
             plan.Add(arguments.AsReadOnly())

@@ -7,10 +7,11 @@ using LocalCompress.Upstream;
 namespace LocalCompress.Core;
 
 public enum CompressionQuality { Quality, Balanced, Small }
-public sealed record ProcessingOptions(int MaxShortEdge = 0, bool ReduceNoise = false, bool NormalizeAudio = false, double? TargetMegabytes = null);
-public sealed record MediaInfo(double Duration, int Width, int Height, bool HasAudio, bool IsHdr);
+public enum VideoScene { Daily, Screen }
+public sealed record ProcessingOptions(int MaxShortEdge = 0, bool ReduceNoise = false, bool NormalizeAudio = false, double? TargetMegabytes = null, VideoScene? Scene = null);
+public sealed record MediaInfo(double Duration, int Width, int Height, bool HasAudio, bool IsHdr, string AudioCodec = "");
 public sealed record CompressionProgress(double Fraction, string Speed, string Stage = "压缩中");
-public sealed record CompressionResult(string OutputPath, long OriginalBytes, long OutputBytes, bool AlreadyWithinTarget = false);
+public sealed record CompressionResult(string OutputPath, long OriginalBytes, long OutputBytes, bool AlreadyWithinTarget = false, bool NotSmaller = false);
 public sealed record ToolPaths(string Ffmpeg, string Ffprobe)
 {
     public static ToolPaths? Find(string appDirectory)
@@ -75,7 +76,7 @@ public sealed class CompressionEngine(ToolPaths tools)
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         var result = await RunAsync(tools.Ffprobe,
             ["-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries",
-             "format=duration:stream=codec_type,width,height,color_transfer", "-of", "json", input],
+             "format=duration:stream=codec_type,codec_name,width,height,color_transfer", "-of", "json", input],
             null, timeout.Token);
         if (result.ExitCode != 0) throw new InvalidOperationException("无法读取视频。文件可能已损坏，或格式不受支持。\n" + result.Error);
         using var json = JsonDocument.Parse(result.Output);
@@ -90,9 +91,11 @@ public sealed class CompressionEngine(ToolPaths tools)
         if (!double.IsFinite(duration) || duration <= 0)
             throw new InvalidOperationException("无法确定视频时长，暂时不能压缩这个文件。");
         var transfer = video.TryGetProperty("color_transfer", out var color) ? color.GetString() : "";
+        var audio = streams.EnumerateArray().FirstOrDefault(x => x.TryGetProperty("codec_type", out var type) && type.GetString() == "audio");
         return new(duration, video.GetProperty("width").GetInt32(), video.GetProperty("height").GetInt32(),
             streams.EnumerateArray().Any(x => x.TryGetProperty("codec_type", out var type) && type.GetString() == "audio"),
-            transfer is "smpte2084" or "arib-std-b67");
+            transfer is "smpte2084" or "arib-std-b67",
+            audio.ValueKind == JsonValueKind.Object && audio.TryGetProperty("codec_name", out var codec) ? codec.GetString() ?? "" : "");
     }
 
     public static IReadOnlyList<string> BuildArguments(string input, string temporaryOutput, CompressionQuality quality,
@@ -100,8 +103,13 @@ public sealed class CompressionEngine(ToolPaths tools)
     {
         options ??= new();
         return PresetCompiler.BuildArguments(input, temporaryOutput, (int)quality,
-            options.MaxShortEdge, options.ReduceNoise, options.NormalizeAudio, hasAudio);
+            options.MaxShortEdge, options.ReduceNoise, options.NormalizeAudio, hasAudio, options.Scene.HasValue ? (int)options.Scene.Value : -1);
     }
+
+    public Task<CompressionResult> CompressSceneAsync(string input, string outputDirectory, VideoScene scene,
+        double? targetMegabytes, IProgress<CompressionProgress>? progress, CancellationToken cancellationToken) =>
+        CompressAsync(input, outputDirectory, CompressionQuality.Quality, progress, cancellationToken,
+            new ProcessingOptions(TargetMegabytes: targetMegabytes, Scene: scene));
 
     public async Task<CompressionResult> CompressAsync(string input, string outputDirectory,
         CompressionQuality quality, IProgress<CompressionProgress>? progress, CancellationToken cancellationToken,
@@ -109,6 +117,7 @@ public sealed class CompressionEngine(ToolPaths tools)
     {
         input = LocalFile(input);
         options ??= new();
+        if (options.Scene.HasValue && !Enum.IsDefined(options.Scene.Value)) throw new ArgumentOutOfRangeException(nameof(options));
         long? targetBytes = null;
         if (options.TargetMegabytes is double target)
         {
@@ -142,7 +151,9 @@ public sealed class CompressionEngine(ToolPaths tools)
             for (var attempt = 0; attempt < attempts; attempt++)
             {
                 var plan = PresetCompiler.BuildPlan(input, temp, (int)quality, options.MaxShortEdge,
-                    options.ReduceNoise, options.NormalizeAudio, info.HasAudio, videoBitrate, passLog);
+                    options.ReduceNoise, options.NormalizeAudio, info.HasAudio, videoBitrate, passLog,
+                    options.Scene.HasValue ? (int)options.Scene.Value : -1,
+                    options.Scene.HasValue && !targetBytes.HasValue && info.AudioCodec == "aac");
                 for (var stageIndex = 0; stageIndex < plan.Count; stageIndex++)
                 {
                     var stageName = targetBytes.HasValue ? (attempt == 0 ? "" : "大小校正 · ") + (stageIndex == 0 ? "分析画面" : "生成视频") : "压缩中";
@@ -188,7 +199,14 @@ public sealed class CompressionEngine(ToolPaths tools)
                 throw new InvalidOperationException("压缩结果未通过完整性检查，原文件未改动。");
             var outputBytes = new FileInfo(temp).Length;
             if (outputBytes >= originalBytes)
+            {
+                if (options.Scene.HasValue)
+                {
+                    progress?.Report(new(1, speed, "无需压缩"));
+                    return new(input, originalBytes, originalBytes, NotSmaller: true);
+                }
                 throw new InvalidOperationException("这个视频已经很紧凑，本次结果没有变小。已丢弃压缩结果，原文件未改动；可以尝试“体积优先”。");
+            }
             cancellationToken.ThrowIfCancellationRequested();
             var stem = Path.GetFileNameWithoutExtension(input) + "_压缩";
             for (var index = 0; ; index++)
