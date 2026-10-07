@@ -57,20 +57,20 @@ public sealed class MainForm : Form
         _files.Columns.Add("状态", 330);
         _files.Columns.Add("耗时", 100);
         layout.Controls.Add(_files, 0, 4);
-        var modeLabel = MakeLabel("均衡压缩 · 默认", 10, true);
+        var modeLabel = MakeLabel("均衡压缩 · 自动调教", 10, true);
         modeLabel.Name = "compressionMode";
         layout.Controls.Add(Flow(modeLabel, MakeLabel("兼顾体积和画质，无需调整编码参数。", 9)), 0, 5);
         var targetOptions = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Visible = false, Name = "targetOptions", Margin = Padding.Empty };
         targetOptions.Controls.AddRange([MakeLabel("每个视频不超过", 9), _target, MakeLabel("MB", 9)]);
         _target.Enabled = false;
-        var sizeHelp = MakeLabel("使用均衡方案，保持原尺寸和帧时间；有损压缩，请保留重要原件。", 9);
+        var sizeHelp = MakeLabel("先短试压选择方案，保持尺寸和帧时间；有损压缩，请保留原件。", 9);
         _limitSize.CheckedChanged += (_, _) =>
         {
             targetOptions.Visible = _limitSize.Checked;
             _target.Enabled = _limitSize.Checked && _run is null;
             sizeHelp.Text = _limitSize.Checked
                 ? "按上限分析再编码，耗时更长。目标越小画质越低；1 MB = 100 万字节。"
-                : "使用均衡方案，保持原尺寸和帧时间；有损压缩，请保留重要原件。";
+                : "先短试压选择方案，保持尺寸和帧时间；有损压缩，请保留原件。";
         };
         layout.Controls.Add(Flow(_limitSize, targetOptions), 0, 6);
         layout.Controls.Add(sizeHelp, 0, 7);

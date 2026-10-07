@@ -152,6 +152,23 @@ try
     await Reject(() => engine.CompressAsync(input, root, CompressionQuality.Balanced, null, cancellation.Token), "cancelled job does not create output");
     var longVideo = Path.Combine(root, "取消测试.mp4");
     await Tool(tools.Ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30", "-t", "15", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "0", longVideo);
+    var autoProgress = new List<double>();
+    var automatic = await engine.CompressBalancedAsync(longVideo, root, null,
+        new InlineProgress(p => autoProgress.Add(p.Fraction)), default);
+    Check(automatic.Automatic is { Samples.Count: 9, FallbackReason: null } && !automatic.QualityProtected &&
+        automatic.OutputBytes < automatic.OriginalBytes && autoProgress.SequenceEqual(autoProgress.Order()) &&
+        !Directory.EnumerateFiles(root, ".localcompress-*").Any(),
+        "automatic product selection measures all three candidates at three positions, produces output and cleans trials");
+    using var autoCancellation = new CancellationTokenSource();
+    await Reject(() => engine.CompressBalancedAsync(longVideo, root, null,
+        new InlineProgress(p => { if (p.Stage == "自动选择压缩方案" && p.Fraction > 0) autoCancellation.Cancel(); }), autoCancellation.Token),
+        "automatic selection cancellation stops encoding");
+    Check(autoCancellation.IsCancellationRequested && !Directory.EnumerateFiles(root, ".localcompress-*").Any(),
+        "automatic cancellation cleans owned trial files");
+    Check(balancedTarget.Automatic is null, "target-size mode bypasses automatic CRF selection");
+    var balancedAudioHash = await Tool(tools.Ffmpeg, "-v", "error", "-i", balanced.OutputPath, "-map", "0:a:0", "-c:a", "copy", "-f", "hash", "-hash", "sha256", "-");
+    Check(info.AudioBitrate is > 0 and <= 128000 && balancedAudioHash == sourceAudioHash,
+        "compatible low-bitrate AAC is copied without a second lossy encode");
     using var activeCancellation = new CancellationTokenSource();
     var sceneFractions = new List<double>();
     var sceneStages = new List<string>();
@@ -182,6 +199,11 @@ try
         textureHash.SequenceEqual(textureAfter) &&
         !Directory.EnumerateFiles(root, ".localcompress-*").Any() && !File.Exists(Path.Combine(root, "细碎纹理_压缩.mp4")),
         "texture trial protects the original when even the baseline fails the quality floor, without encoding a whole result");
+    var autoTexture = await engine.CompressBalancedAsync(texture, root, null, null, default);
+    Check(!autoTexture.QualityProtected && File.Exists(autoTexture.OutputPath) &&
+        autoTexture.OutputPath != texture && autoTexture.Automatic is { Profile: 0 } &&
+        !Directory.EnumerateFiles(root, ".localcompress-*").Any(),
+        "automatic selection retains baseline encoding instead of blocking textured video on trial quality");
     var cancelProgress = new InlineProgress(_ => activeCancellation.Cancel());
     await Reject(() => engine.CompressAsync(longVideo, root, CompressionQuality.Balanced, cancelProgress, activeCancellation.Token), "running encoder can be cancelled");
     Check(activeCancellation.IsCancellationRequested && File.Exists(longVideo), "in-flight cancellation leaves the original intact");

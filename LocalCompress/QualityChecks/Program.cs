@@ -70,6 +70,12 @@ try
                 foreach (var sample in decision.Samples)
                     decisionDetails.AppendLine(FormattableString.Invariant($"\n位置 {sample.Position:F2}s：候选/基线视频字节 {sample.CandidateBytes}/{sample.BaselineBytes}，最差 SSIM {sample.CandidateSsim:F6}/{sample.BaselineSsim:F6}，对应区域最大下降 {sample.MaximumRegionDrop:F6}。"));
             }
+            if (result.Automatic is { } automatic)
+            {
+                var details = System.Text.Json.JsonSerializer.Serialize(automatic);
+                Console.WriteLine(details);
+                decisionDetails.AppendLine("\n自动选择诊断（开发验证，非画质保证）：\n\n```json\n" + details + "\n```");
+            }
             Console.WriteLine($"PASS Real {Path.GetFileName(input)}: {result.OutputBytes}/{result.OriginalBytes} bytes, SSIM {metric}, scene offset {result.SceneQualityOffset}, original hash unchanged");
         }
         report.Append(decisionDetails);

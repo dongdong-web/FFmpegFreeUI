@@ -23,7 +23,9 @@ Public NotInheritable Class PresetCompiler
                                     Optional scene As Integer = -1,
                                     Optional copyAudio As Boolean = False,
                                     Optional sceneQualityOffset As Integer = 0,
-                                    Optional preserveTiming As Boolean = False) As IReadOnlyList(Of IReadOnlyList(Of String))
+                                    Optional preserveTiming As Boolean = False,
+                                    Optional automaticProfile As Integer = 0) As IReadOnlyList(Of IReadOnlyList(Of String))
+        If automaticProfile < 0 OrElse automaticProfile > 2 OrElse (automaticProfile <> 0 AndAlso (scene >= 0 OrElse videoBitrate <> 0)) Then Throw New ArgumentOutOfRangeException(NameOf(automaticProfile))
         If quality < 0 OrElse quality > 2 Then Throw New ArgumentOutOfRangeException(NameOf(quality))
         If Not {0, 720, 1080}.Contains(maxShortEdge) Then Throw New ArgumentOutOfRangeException(NameOf(maxShortEdge))
         If scene < -1 OrElse scene > 1 Then Throw New ArgumentOutOfRangeException(NameOf(scene))
@@ -35,12 +37,13 @@ Public NotInheritable Class PresetCompiler
             Throw New ArgumentException("Scene profiles preserve size and do not apply noise or loudness filters.")
         End If
         Dim crf = If(scene = -1, {"20", "25", "30"}(quality), (If(scene = 0, 20, 18) + sceneQualityOffset).ToString(CultureInfo.InvariantCulture))
+        If automaticProfile > 0 Then crf = If(automaticProfile = 1, "25", "28")
         Dim preset As New 预设数据_v6 With {
             .输出容器 = "mp4",
             .视频参数_编码器_类型 = 预设数据_v6.视频编码器类型.视频,
             .视频参数_编码器_分类名称 = "H.264/AVC",
             .视频参数_编码器_具体编码 = "libx264",
-            .视频参数_编码器_编码预设 = If(scene >= 0, "slow", "medium"),
+            .视频参数_编码器_编码预设 = If(automaticProfile > 0, "veryslow", If(scene >= 0, "slow", "medium")),
             .视频参数_比特率_控制方式 = 预设数据_v6.视频全局质量控制方式.CRF,
             .视频参数_质量控制_参数名 = "crf",
             .视频参数_质量控制_值 = crf,
@@ -101,6 +104,7 @@ Public NotInheritable Class PresetCompiler
                 arguments(logIndex + 1) = passLog
             End If
             arguments.InsertRange(0, {"-nostdin", "-protocol_whitelist", "file,pipe"})
+            If automaticProfile > 0 Then arguments.InsertRange(arguments.Count - 1, {"-x264-params", "ref=3:bframes=3:me=umh:min-keyint=1:scenecut=60:deblock=1,1:qcomp=0.5:psy-rd=0.3,0:aq-mode=2:aq-strength=0.8"})
             If scene >= 0 OrElse preserveTiming Then arguments.InsertRange(arguments.Count - 1, {"-fps_mode", "passthrough"})
             If Not firstPass Then arguments.InsertRange(arguments.Count - 1, {"-map_metadata:s", "-1", "-movflags", "+faststart"})
             arguments.InsertRange(arguments.Count - 1, {"-progress", "pipe:1", "-nostats"})
