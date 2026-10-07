@@ -48,11 +48,14 @@ var thread = new Thread(() =>
             if (form.Controls.Find("playResult", true).Length != 0) throw new Exception("Unsupported playback button is still exposed.");
             var locate = form.Controls.Find("locateResult", true).Single();
             if (!status.Text.Contains("已压缩 1 个，已跳过 1 个，失败 1 个")) throw new Exception("Misleading batch counts: " + status.Text);
+            if (rows.Columns.Count != 4 || rows.Columns[3].Text != "耗时" || !status.Text.Contains("总耗时")) throw new Exception("Missing task or batch timing.");
             void SelectRow(int index)
             {
                 foreach (ListViewItem row in rows.Items) row.Selected = false;
                 rows.Items[index].Selected = true;
                 Application.DoEvents();
+                if (!detail.Text.Contains("处理耗时") || !rows.Items[index].SubItems[3].Text.Contains("秒"))
+                    throw new Exception("Missing elapsed time for task " + index);
             }
             SelectRow(0);
             if (!rows.Items[0].SubItems[2].Text.StartsWith("已生成") || !detail.Text.Contains("保存位置") ||

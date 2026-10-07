@@ -52,9 +52,10 @@ public sealed class MainForm : Form
         layout.Controls.Add(MakeLabel("1  添加视频   →   2  按需设置大小上限   →   3  开始压缩", 11, true), 0, 2);
         var fileActions = Flow(_add, _remove, MakeLabel("也可以把视频拖到这里", 10));
         layout.Controls.Add(fileActions, 0, 3);
-        _files.Columns.Add("视频", 340);
-        _files.Columns.Add("原始大小", 110);
+        _files.Columns.Add("视频", 280);
+        _files.Columns.Add("原始大小", 100);
         _files.Columns.Add("状态", 330);
+        _files.Columns.Add("耗时", 100);
         layout.Controls.Add(_files, 0, 4);
         var modeLabel = MakeLabel("均衡压缩 · 默认", 10, true);
         modeLabel.Name = "compressionMode";
@@ -143,7 +144,7 @@ public sealed class MainForm : Form
             {
                 var local = CompressionEngine.LocalFile(path);
                 if (_files.Items.Cast<ListViewItem>().Any(x => string.Equals(((VideoItem)x.Tag!).Path, local, StringComparison.OrdinalIgnoreCase))) continue;
-                var row = new ListViewItem([Path.GetFileName(local), FormatBytes(new FileInfo(local).Length), "等待压缩"])
+                var row = new ListViewItem([Path.GetFileName(local), FormatBytes(new FileInfo(local).Length), "等待压缩", "—"])
                     { Tag = new VideoItem(local), ToolTipText = local };
                 _files.Items.Add(row);
             }
@@ -165,6 +166,7 @@ public sealed class MainForm : Form
         SetRunning(true);
         double? targetMegabytes = _limitSize.Checked ? (double)_target.Value : null;
         var engine = new CompressionEngine(_tools);
+        var batchClock = Stopwatch.StartNew();
         int completed = 0, skipped = 0, unsuccessful = 0;
         try
         {
@@ -173,6 +175,8 @@ public sealed class MainForm : Form
                 if (cancellation.IsCancellationRequested) break;
                 var row = jobs[i];
                 var item = (VideoItem)row.Tag!;
+                var taskClock = Stopwatch.StartNew();
+                row.SubItems[3].Text = "处理中";
                 foreach (ListViewItem selected in _files.SelectedItems) selected.Selected = false;
                 row.Selected = true;
                 row.EnsureVisible();
@@ -211,12 +215,22 @@ public sealed class MainForm : Form
                     item.Detail = ex.Message;
                     unsuccessful++;
                 }
-                finally { active = false; UpdateResult(); }
+                finally
+                {
+                    taskClock.Stop();
+                    active = false;
+                    var elapsed = FormatDuration(taskClock.Elapsed);
+                    row.SubItems[3].Text = elapsed;
+                    item.Detail += $"\r\n处理耗时：{elapsed}（包含读取、编码、结果检查和临时文件清理，不含排队）。";
+                    UpdateResult();
+                }
                 _progress.Value = (i + 1) * 1000 / jobs.Length;
             }
             _status.Text = cancellation.IsCancellationRequested
                 ? $"已停止：已压缩 {completed} 个，已跳过 {skipped} 个，失败 {unsuccessful} 个。原文件保留。"
                 : $"处理结束：已压缩 {completed} 个，已跳过 {skipped} 个，失败 {unsuccessful} 个。原文件保留。";
+            batchClock.Stop();
+            _status.Text += $" 总耗时 {FormatDuration(batchClock.Elapsed)}。";
         }
         finally
         {
@@ -269,6 +283,10 @@ public sealed class MainForm : Form
 
     private void UpdateStart() => _start.Enabled = _run is null && _tools is not null && _files.Items.Cast<ListViewItem>().Any(x => !((VideoItem)x.Tag!).Completed);
     private static string FormatBytes(long size) => size >= 1_000_000_000 ? $"{size / 1_000_000_000d:F2} GB" : $"{size / 1_000_000d:F2} MB";
+    private static string FormatDuration(TimeSpan elapsed) => elapsed.TotalHours >= 1
+        ? $"{(int)elapsed.TotalHours} 小时 {elapsed.Minutes} 分 {elapsed.Seconds} 秒"
+        : elapsed.TotalMinutes >= 1 ? $"{(int)elapsed.TotalMinutes} 分 {elapsed.Seconds} 秒"
+        : elapsed.TotalSeconds < .1 ? "小于 0.1 秒" : $"{elapsed.TotalSeconds:F1} 秒";
     private static Label MakeLabel(string text, float size, bool bold = false) => new()
     { Text = text, AutoSize = true, Font = new Font("Microsoft YaHei UI", size, bold ? FontStyle.Bold : FontStyle.Regular), Margin = new Padding(0, 9, 12, 0) };
     private static FlowLayoutPanel Flow(params Control[] controls)
