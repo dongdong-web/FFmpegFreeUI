@@ -1,6 +1,6 @@
 # 轻压：本地视频压缩
 
-轻压是独立维护的大众视频压缩工具，当前版本 0.6.1，面向 Windows 10/11 x64。
+轻压是独立维护的大众视频压缩工具，当前版本 0.6.2，面向 Windows 10/11 x64。
 项目派生自 FFmpegFreeUI，不是原项目的官方版本，也不代表原作者认可或提供支持。详见 [项目关系说明](RELATIONSHIP.md)；分享文件清单与分发材料状态见 [分享说明](SHARING.md)。
 简易界面使用标准 WinForms，真实复用上游的预设模型、编码器数据库、质量控制、滤镜组合与阶段化命令生成源码。
 这些源码单独编译为无界面的处理库，不加载上游的 LakeUI、Agent、社区、更新器、插件或远程调用。
@@ -72,12 +72,12 @@ dotnet run --project LocalCompress/UiSmoke/LocalCompress.UiSmoke.csproj -c Relea
 打包（只在开发时准备引擎，用户运行时不下载）：
 
 ```powershell
-./LocalCompress/package.ps1 -FFmpegDirectory 'D:\tools\ffmpeg-build'
+./LocalCompress/package.ps1 -FFmpegDirectory 'D:\tools\localcompress-engine' -EngineSourceArchive 'D:\tools\FFmpeg-x264-corresponding-source.zip'
 ```
 
 引擎目录必须包含 `bin/ffmpeg.exe`、`bin/ffprobe.exe`、`LICENSE` 和 `README.txt`。
-产物位于 `artifacts/LocalCompress-win-x64`，包含自带运行时的应用、引擎、许可和使用说明。
-发布给公众前须提供所选 FFmpeg 构建及其依赖的对应源代码，按其 GPL 等许可完成分发材料；本次只生成本地体验包，没有公开发布二进制 Release。
+产物位于 `artifacts/LocalCompress-win-x64`，包含自带运行时的应用、引擎、许可、对应内核源码 ZIP 和使用说明。
+0.6.2 内核从固定版本 FFmpeg、x264、dav1d 源码构建。源码获取、编译与归档方法见 [内核构建说明](Engine/README.md)。打包脚本校验内核源码包的对应二进制哈希，防止新源码与旧内核混用。公开分享时保留完整包和所有许可；本次准备本地分享文件，没有上传网盘或公开发布 GitHub Release。
 
 ## 维护
 

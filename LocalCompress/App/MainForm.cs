@@ -83,10 +83,10 @@ public sealed class MainForm : Form
         var about = MakeButton("关于轻压", false);
         about.Name = "aboutLocalCompress";
         about.Click += (_, _) => MessageBox.Show(this,
-            "轻压 0.6.1 · 面向普通用户的本地视频压缩工具\n\n" +
+            "轻压 0.6.2 · 面向普通用户的本地视频压缩工具\n\n" +
             "独立维护，基于 FFmpegFreeUI 的开放处理源码；不是其官方版本，未获得原作者背书。轻压的效果、维护与问题处理由本项目负责。\n\n" +
             "感谢 FFmpegFreeUI 作者及贡献者。需要专业参数与扩展能力，请使用原项目。\n\n" +
-            "实际编码由本机 FFmpeg / x264 等组件完成。第三方许可与项目关系见随包说明，视频不上传作者服务器。",
+            "实际编码由本机 FFmpeg / x264 等组件完成。许可证在 licenses，对应内核源码在 sources。视频全程在本机处理。",
             "关于轻压", MessageBoxButtons.OK, MessageBoxIcon.Information);
         layout.Controls.Add(Flow(_start, _cancel, _open, about), 0, 11);
         layout.Controls.Add(_result, 0, 12);
